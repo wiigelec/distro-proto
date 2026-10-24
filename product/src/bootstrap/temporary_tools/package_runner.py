@@ -214,6 +214,28 @@ def install_handoff(stage, root, policy, pkg, manifest, cross_archive):
                 expected[rel] = ('sha256', digest.hexdigest())
             elif member.issym():
                 expected[rel] = ('link', member.linkname)
+            elif member.islnk():
+                # Tar hard links are physical files in the imported root. Only
+                # accept links to an earlier regular archive member, as required
+                # by the cross-toolchain import validator.
+                target = member.linkname
+                target_path = Path(target)
+                if (target_path.is_absolute() or '..' in target_path.parts
+                        or not target_path.parts or target == rel):
+                    raise RuntimeError('unsafe imported archive hard link: ' + rel)
+                try:
+                    owner = tf.getmember(target)
+                except KeyError as exc:
+                    raise RuntimeError('missing imported archive hard link target: ' + rel) from exc
+                if not owner.isfile() or owner.offset >= member.offset:
+                    raise RuntimeError('invalid imported archive hard link target: ' + rel)
+                src = tf.extractfile(owner)
+                if src is None:
+                    raise RuntimeError('unreadable imported archive hard link target: ' + rel)
+                digest = hashlib.sha256()
+                for block in iter(lambda: src.read(1024 * 1024), b''):
+                    digest.update(block)
+                expected[rel] = ('hardlink', (target, digest.hexdigest()))
             else:
                 raise RuntimeError('unsupported imported collision: ' + rel)
     transition, preserve = [], []
@@ -225,6 +247,14 @@ def install_handoff(stage, root, policy, pkg, manifest, cross_archive):
             raise RuntimeError('modified imported file: ' + rel)
         if kind == 'link' and (not dest.is_symlink() or os.readlink(dest) != value):
             raise RuntimeError('modified imported symlink: ' + rel)
+        if kind == 'hardlink':
+            owner_rel, owner_digest = value
+            owner_path = root / owner_rel
+            if (dest.is_symlink() or not dest.is_file()
+                    or owner_path.is_symlink() or not owner_path.is_file()
+                    or not os.path.samefile(dest, owner_path)
+                    or common.sha(dest) != owner_digest):
+                raise RuntimeError('modified imported hard link: ' + rel)
         if rel.startswith(prefix):
             transition.append((path, dest, rel))
         else:
