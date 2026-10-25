@@ -288,10 +288,11 @@ def main(argv=None):
         for dep, dep_src in dep_paths.items():
             cmd += ['--ro-bind', str(dep_src), '/prerequisites/' + dep]
         cmd += ['--', '/bin/bash', '--noprofile', '--norc', '/build/build.sh']
-        with (run / 'build.log').open('w') as log:
-            proc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT, timeout=7200)
-        if proc.returncode:
-            raise RuntimeError(f'native {name} build failed ({proc.returncode}); inspect {run / "build.log"}')
+        log = run / 'build.log'
+        print(f'[native-verify] {name}: streaming build output; log={log}', flush=True)
+        # Use the same binary-chunk live tee as the existing M2 package runner.
+        # Failure retains the complete log and aborts before stamping success.
+        package_runner.common.run(cmd, log, timeout=7200)
         staged = verify_stage(run / 'stage')
         proof = {'archive_sha256': observed, 'source_sha256': source['sha256'],
                  'recipe_sha256': digest(recipe_path), 'script_sha256': digest(script),
