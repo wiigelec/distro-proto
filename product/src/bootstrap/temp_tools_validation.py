@@ -233,13 +233,28 @@ def verify_native_runtime(root, state):
                   '/usr/bin/gcc /work/smoke.c -o /work/smoke; '
                   '/work/smoke; '
                   '/usr/bin/gcc -dumpmachine')
+        # A read-only root cannot accommodate new mount-point directories.
+        # Use a disposable filesystem for namespace mount points and expose
+        # each native-root top-level entry unchanged and read-only.
         command = ['bwrap', '--die-with-parent', '--new-session', '--unshare-user',
                    '--unshare-pid', '--unshare-net', '--unshare-ipc', '--unshare-uts',
-                   '--ro-bind', str(root), '/', '--proc', '/proc', '--dev', '/dev',
-                   '--tmpfs', '/tmp', '--bind', str(scratch), '/work',
-                   '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
-                   '--setenv', 'HOME', '/work', '--setenv', 'LC_ALL', 'C',
-                   '--', '/usr/bin/bash', '--noprofile', '--norc', '-c', script]
+                   '--tmpfs', '/']
+        reserved = {'proc', 'dev', 'tmp', 'work'}
+        for entry in sorted(root.iterdir()):
+            if entry.name in reserved:
+                raise RuntimeError('native root overlaps verifier mount point: ' + entry.name)
+            destination = '/' + entry.name
+            if entry.is_symlink():
+                command += ['--symlink', os.readlink(entry), destination]
+            elif entry.is_dir():
+                command += ['--ro-bind', str(entry), destination]
+            else:
+                raise RuntimeError('unexpected native root top-level entry: ' + entry.name)
+        command += ['--proc', '/proc', '--dev', '/dev',
+                    '--tmpfs', '/tmp', '--bind', str(scratch), '/work',
+                    '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
+                    '--setenv', 'HOME', '/work', '--setenv', 'LC_ALL', 'C',
+                    '--', '/usr/bin/bash', '--noprofile', '--norc', '-c', script]
         result = subprocess.run(command, capture_output=True, text=True, timeout=180)
         if result.returncode:
             raise RuntimeError('isolated native compiler/runtime check failed: ' + result.stderr[-1200:])
