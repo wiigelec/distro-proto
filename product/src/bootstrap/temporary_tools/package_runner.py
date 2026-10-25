@@ -480,6 +480,116 @@ def import_cross_toolchain(project, cross_archive, target):
     print('[import] Cross-toolchain import complete', flush=True)
 
 
+
+def verify_temporary_tools_handoff(project, manifest):
+    """Verify M2 stamps and installed payload before publishing a handoff."""
+    root, state = project / 'root', project / '.distro-bootstrap'
+    if root.is_symlink() or not root.is_dir() or state.is_symlink():
+        raise RuntimeError('unsafe temporary-tools handoff root')
+    marker_path = state / 'temp-tools-import.json'
+    marker = json.loads(marker_path.read_text())
+    if marker.get('stage') != 'temp-tools' or marker.get('status') != 'complete':
+        raise RuntimeError('incomplete M1 import evidence')
+    for rel, checksum in marker.get('files', {}).items():
+        target = root / rel
+        if target.is_symlink() or not target.is_file() or common.sha(target) != checksum:
+            raise RuntimeError('modified M1 import prerequisite: ' + rel)
+    stamps = {}
+    for pkg in manifest['packages']:
+        name = pkg['name']
+        stamp_path = state / 'stamps' / (name + '.json')
+        if not stamp_path.is_file() or stamp_path.is_symlink():
+            raise RuntimeError('missing completed temporary-tools stamp: ' + name)
+        stamp = json.loads(stamp_path.read_text())
+        recipe_path = (HERE / pkg['recipe']).resolve()
+        if not recipe_path.is_relative_to(HERE) or not recipe_path.is_file():
+            raise RuntimeError('invalid M2 recipe for export: ' + name)
+        signature = hashlib.sha256((common.sha(recipe_path) + ':' +
+                                    json.dumps(pkg, sort_keys=True)).encode()).hexdigest()
+        verify_stamp(stamp_path, signature, root)
+        if stamp.get('package') != name or stamp.get('phase') != 'temp-tools':
+            raise RuntimeError('incorrect completed stamp identity: ' + name)
+        stamps[name] = common.sha(stamp_path)
+    return {'schema_version': 1, 'phase': 'temp-tools', 'status': 'verified',
+            'target': manifest['target'], 'm1_import_sha256': common.sha(marker_path),
+            'manifest_sha256': common.sha(MANIFEST), 'package_stamps': stamps}
+
+
+def verify_temporary_tools_archive(root, destination):
+    """Compare the complete tar inventory and bytes against the installed root."""
+    expected = {p.relative_to(root).as_posix(): p for p in root.rglob('*')}
+    with tarfile.open(destination, 'r:xz') as archive:
+        members = archive.getmembers()
+        if len(members) != len(expected) or {m.name for m in members} != set(expected):
+            raise RuntimeError('M2 handoff archive inventory mismatch')
+        for member in members:
+            path = expected[member.name]
+            if member.isfile():
+                stream = archive.extractfile(member)
+                if (path.is_symlink() or not path.is_file() or stream is None or
+                        hashlib.sha256(stream.read()).hexdigest() != common.sha(path)):
+                    raise RuntimeError('M2 handoff archive file mismatch: ' + member.name)
+            elif member.islnk():
+                owner = expected.get(member.linkname)
+                stream = archive.extractfile(member)
+                if (owner is None or path.is_symlink() or owner.is_symlink() or
+                        not path.is_file() or not owner.is_file() or
+                        not os.path.samefile(path, owner) or stream is None or
+                        hashlib.sha256(stream.read()).hexdigest() != common.sha(path)):
+                    raise RuntimeError('M2 handoff archive hard link mismatch: ' + member.name)
+            elif member.issym():
+                if not path.is_symlink() or os.readlink(path) != member.linkname:
+                    raise RuntimeError('M2 handoff archive symlink mismatch: ' + member.name)
+            elif not member.isdir() or not path.is_dir() or path.is_symlink():
+                raise RuntimeError('M2 handoff archive member mismatch: ' + member.name)
+    return len(members)
+
+
+def export_temporary_tools(project, manifest):
+    """Publish or reverify a deterministic M2-to-M3 handoff after all packages pass."""
+    evidence = verify_temporary_tools_handoff(project, manifest)
+    root = project / 'root'
+    artifacts = project / 'artifacts'
+    if artifacts.is_symlink():
+        raise RuntimeError('unsafe temporary-tools artifact directory')
+    artifacts.mkdir(exist_ok=True)
+    archive = artifacts / 'temp-tools-root.tar.xz'
+    report = artifacts / 'temp-tools-evidence.json'
+    if archive.is_symlink() or report.is_symlink():
+        raise RuntimeError('unsafe temporary-tools published artifact')
+    if archive.exists() != report.exists():
+        raise RuntimeError('partial temporary-tools handoff; preserve evidence')
+    if archive.exists():
+        count = verify_temporary_tools_archive(root, archive)
+        expected = dict(evidence, handoff={'archive': str(archive),
+                         'sha256': common.sha(archive), 'members': count})
+        if json.loads(report.read_text()) != expected:
+            raise RuntimeError('existing temporary-tools evidence differs')
+        print('[export] Verified existing temporary-tools archive: ' + str(archive), flush=True)
+        return expected
+    # Fail closed if stale unpublished temporary archive remains from a failed run.
+    temporary = artifacts / '.temp-tools-root.tar.xz.partial'
+    if temporary.exists() or temporary.is_symlink():
+        raise RuntimeError('incomplete temporary-tools archive exists; inspect before retry')
+    print('[export] Creating temporary-tools archive: ' + str(archive), flush=True)
+    try:
+        with tarfile.open(temporary, 'w:xz', format=tarfile.PAX_FORMAT) as output:
+            for path in sorted(root.rglob('*')):
+                output.add(path, arcname=path.relative_to(root).as_posix(), recursive=False)
+        count = verify_temporary_tools_archive(root, temporary)
+        handoff = dict(evidence, handoff={'archive': str(archive),
+                       'sha256': common.sha(temporary), 'members': count})
+        os.link(temporary, archive)
+    finally:
+        temporary.unlink(missing_ok=True)
+    # A failed report publication remains explicitly detectable on resume.
+    with report.open('x', encoding='utf-8') as stream:
+        json.dump(handoff, stream, indent=2, sort_keys=True)
+        stream.write('\n')
+    print('[export] Verified ' + str(count) + ' temporary-tools archive members', flush=True)
+    print('Temporary tools verified: ' + str(archive), flush=True)
+    return handoff
+
 def main(project, cross_archive):
     if os.geteuid() == 0:
         raise RuntimeError('run as ordinary user')
@@ -504,6 +614,7 @@ def main(project, cross_archive):
         package_run(project, manifest, pkg, cross_archive)
         done.add(pkg['name'])
     print(f'[bootstrap] Temporary-tools cross-build complete: {len(done)} packages', flush=True)
+    export_temporary_tools(project, manifest)
     return 0
 
 def native_recipe_argv(step, values, explicit_native=False):

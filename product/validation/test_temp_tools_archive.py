@@ -127,5 +127,44 @@ class HandoffHardlinkTests(unittest.TestCase):
                 scenario(**kwargs)
 
 
+
+class TemporaryToolsExportTests(unittest.TestCase):
+    """M2 export is part of the build and is immutable across resumes."""
+
+    def test_export_requires_completed_package_stamps(self):
+        import sys
+        import tempfile
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+        from bootstrap.temporary_tools import package_runner
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            (project / 'root').mkdir()
+            (project / '.distro-bootstrap').mkdir()
+            with self.assertRaises((RuntimeError, FileNotFoundError)):
+                package_runner.export_temporary_tools(project, {'target': 'x86_64-distro-linux-gnu', 'packages': []})
+            self.assertFalse((project / 'artifacts/temp-tools-root.tar.xz').exists())
+
+    def test_archive_verifier_preserves_hard_links(self):
+        import os
+        import tempfile
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+        from bootstrap.temporary_tools import package_runner
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / 'root'
+            (root / 'usr/bin').mkdir(parents=True)
+            (root / 'usr/bin/tool').write_bytes(b'payload')
+            os.link(root / 'usr/bin/tool', root / 'usr/bin/tool-alias')
+            tar = base / 'archive.tar.xz'
+            with tarfile.open(tar, 'w:xz') as archive:
+                for entry in sorted(root.rglob('*')):
+                    archive.add(entry, arcname=entry.relative_to(root).as_posix(), recursive=False)
+            self.assertEqual(package_runner.verify_temporary_tools_archive(root, tar), 4)
+            (root / 'usr/bin/tool-alias').unlink()
+            (root / 'usr/bin/tool-alias').write_bytes(b'payload')
+            with self.assertRaisesRegex(RuntimeError, 'hard link mismatch'):
+                package_runner.verify_temporary_tools_archive(root, tar)
+
 if __name__ == '__main__':
     unittest.main()
