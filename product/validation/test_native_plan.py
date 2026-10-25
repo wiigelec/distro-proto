@@ -54,6 +54,17 @@ class NativePlanTests(unittest.TestCase):
         self.assertIn('<DESTDIR=/tmp/stage with spaces>', result.stdout)
         self.assertIn('<--literal=$(touch /tmp/unwanted)>', result.stdout)
 
+    def test_explicit_native_gcc_flags_are_preserved(self):
+        arg = 'CC_FOR_TARGET=/usr/bin/gcc -fno-link-libatomic'
+        self.assertEqual(module.convert_arg(arg, explicit=True,
+                                           target='x86_64-distro-linux-gnu', jobs=2), arg)
+        with self.assertRaisesRegex(ValueError, 'host-cross'):
+            module.convert_arg(arg, explicit=False,
+                               target='x86_64-distro-linux-gnu', jobs=2)
+        with self.assertRaisesRegex(ValueError, 'host-cross'):
+            module.convert_arg('/toolchain/usr/bin/gcc -fno-link-libatomic',
+                               explicit=True, target='x86_64-distro-linux-gnu', jobs=2)
+
     def test_missing_source_or_script_fails_closed(self):
         recipe={'name':'bash','execution':'host-cross','steps':[
           {'name':'configure','argv':['/work/src/configure','--foo={unknown}']}]}

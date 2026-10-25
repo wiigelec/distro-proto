@@ -31,7 +31,8 @@ def convert_arg(arg, *, explicit, target, jobs):
     arg = PLACEHOLDER.sub(replace, arg)
     arg = arg.replace('/work/src/', '${DISTRO_WORK}/src/')
     arg = arg.replace('/work/stage', '${DISTRO_STAGE}')
-    if any(x in arg for x in DISALLOWED) or re.search(r'(?<!\$)\{', arg):
+    if (any(x in arg for x in DISALLOWED if x != '-fno-link-libatomic' or not explicit)
+            or re.search(r'(?<!\$)\{', arg)):
         raise ValueError('host-cross argument survived native translation: ' + arg)
     return arg
 
