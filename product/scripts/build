@@ -79,10 +79,10 @@ def save_new(path: Path, report: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
-    native = commands.add_parser('temp-tools-validate', help='Validate native rebuilds from M2 archive')
+    native = commands.add_parser('temp-tools-validate', help='Validate native rebuilds from temporary-tools archive')
     native.add_argument('--root', type=Path, required=True)
     native.add_argument('--temp-tools', type=Path, required=True)
-    temporary = commands.add_parser('temp-tools', help='M2 Part 1 cross-build')
+    temporary = commands.add_parser('temp-tools', help='Build temporary tools with cross-toolchain')
     temporary.add_argument('--root', type=Path, required=True)
     temporary.add_argument('--cross-toolchain', type=Path, required=True)
     audit = commands.add_parser('host-audit', help='Inspect installed packages and upstream source candidates')

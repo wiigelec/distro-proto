@@ -482,18 +482,18 @@ def import_cross_toolchain(project, cross_archive, target):
 
 
 def verify_temporary_tools_handoff(project, manifest):
-    """Verify M2 stamps and installed payload before publishing a handoff."""
+    """Verify temporary-tools stamps and installed payload before publishing a handoff."""
     root, state = project / 'root', project / '.distro-bootstrap'
     if root.is_symlink() or not root.is_dir() or state.is_symlink():
         raise RuntimeError('unsafe temporary-tools handoff root')
     marker_path = state / 'temp-tools-import.json'
     marker = json.loads(marker_path.read_text())
     if marker.get('stage') != 'temp-tools' or marker.get('status') != 'complete':
-        raise RuntimeError('incomplete M1 import evidence')
+        raise RuntimeError('incomplete cross-toolchain import evidence')
     for rel, checksum in marker.get('files', {}).items():
         target = root / rel
         if target.is_symlink() or not target.is_file() or common.sha(target) != checksum:
-            raise RuntimeError('modified M1 import prerequisite: ' + rel)
+            raise RuntimeError('modified cross-toolchain import prerequisite: ' + rel)
     stamps = {}
     for pkg in manifest['packages']:
         name = pkg['name']
@@ -503,7 +503,7 @@ def verify_temporary_tools_handoff(project, manifest):
         stamp = json.loads(stamp_path.read_text())
         recipe_path = (HERE / pkg['recipe']).resolve()
         if not recipe_path.is_relative_to(HERE) or not recipe_path.is_file():
-            raise RuntimeError('invalid M2 recipe for export: ' + name)
+            raise RuntimeError('invalid temporary-tools recipe for export: ' + name)
         signature = hashlib.sha256((common.sha(recipe_path) + ':' +
                                     json.dumps(pkg, sort_keys=True)).encode()).hexdigest()
         verify_stamp(stamp_path, signature, root)
@@ -521,14 +521,14 @@ def verify_temporary_tools_archive(root, destination):
     with tarfile.open(destination, 'r:xz') as archive:
         members = archive.getmembers()
         if len(members) != len(expected) or {m.name for m in members} != set(expected):
-            raise RuntimeError('M2 handoff archive inventory mismatch')
+            raise RuntimeError('temporary-tools handoff archive inventory mismatch')
         for member in members:
             path = expected[member.name]
             if member.isfile():
                 stream = archive.extractfile(member)
                 if (path.is_symlink() or not path.is_file() or stream is None or
                         hashlib.sha256(stream.read()).hexdigest() != common.sha(path)):
-                    raise RuntimeError('M2 handoff archive file mismatch: ' + member.name)
+                    raise RuntimeError('temporary-tools handoff archive file mismatch: ' + member.name)
             elif member.islnk():
                 owner = expected.get(member.linkname)
                 stream = archive.extractfile(member)
@@ -536,17 +536,17 @@ def verify_temporary_tools_archive(root, destination):
                         not path.is_file() or not owner.is_file() or
                         not os.path.samefile(path, owner) or stream is None or
                         hashlib.sha256(stream.read()).hexdigest() != common.sha(path)):
-                    raise RuntimeError('M2 handoff archive hard link mismatch: ' + member.name)
+                    raise RuntimeError('temporary-tools handoff archive hard link mismatch: ' + member.name)
             elif member.issym():
                 if not path.is_symlink() or os.readlink(path) != member.linkname:
-                    raise RuntimeError('M2 handoff archive symlink mismatch: ' + member.name)
+                    raise RuntimeError('temporary-tools handoff archive symlink mismatch: ' + member.name)
             elif not member.isdir() or not path.is_dir() or path.is_symlink():
-                raise RuntimeError('M2 handoff archive member mismatch: ' + member.name)
+                raise RuntimeError('temporary-tools handoff archive member mismatch: ' + member.name)
     return len(members)
 
 
 def export_temporary_tools(project, manifest):
-    """Publish or reverify a deterministic M2-to-M3 handoff after all packages pass."""
+    """Publish or reverify a deterministic temporary-tools handoff after all packages pass."""
     evidence = verify_temporary_tools_handoff(project, manifest)
     root = project / 'root'
     artifacts = project / 'artifacts'

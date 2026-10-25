@@ -1,4 +1,4 @@
-"""FS-001 native archive validation tests."""
+"""Temporary-tools archive native-build validation tests."""
 import hashlib
 import io
 import os

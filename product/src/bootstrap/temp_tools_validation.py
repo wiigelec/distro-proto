@@ -1,4 +1,4 @@
-"""FS-001 M2 archive self-hosting proof. Never installs into the imported root."""
+"""Temporary-tools archive self-hosting proof. Never installs into the imported root."""
 import argparse
 import hashlib
 import json
@@ -177,31 +177,31 @@ def verify_stage(stage):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--root', type=Path, required=True, help='Fresh validation workspace')
-    ap.add_argument('--temp-tools', type=Path, required=True, help='Verified M2 archive')
+    ap.add_argument('--temp-tools', type=Path, required=True, help='Verified temporary-tools archive')
     args = ap.parse_args(argv)
     if os.geteuid() == 0:
         ap.error('run unprivileged')
     project = args.root.expanduser().resolve()
     archive = args.temp_tools.expanduser().resolve(strict=True)
     if project in (Path('/'), Path.home().resolve()) or archive.is_relative_to(project):
-        raise RuntimeError('validation workspace must be separate from M2 archive')
+        raise RuntimeError('validation workspace must be separate from temporary-tools archive')
     if archive.name != 'temp-tools-root.tar.xz':
-        raise RuntimeError('expected M2 handoff archive filename')
+        raise RuntimeError('expected temporary-tools archive filename')
     evidence_path = archive.parent / 'temp-tools-evidence.json'
     evidence = json.loads(evidence_path.read_text())
     if evidence.get('status') != 'verified' and evidence.get('status') != 'passed':
-        raise RuntimeError('M2 export evidence not verified')
+        raise RuntimeError('temporary-tools export evidence not verified')
     # The evidence schema is authoritative; explicitly refuse unknown formats.
-    print('[native-verify] Verifying M2 archive SHA-256: ' + str(archive), flush=True)
+    print('[native-verify] Verifying temporary-tools archive SHA-256: ' + str(archive), flush=True)
     observed = digest(archive)
     sha = evidence.get('handoff', {}).get('sha256')
     if sha != observed:
-        raise RuntimeError('M2 archive digest not bound to export evidence')
+        raise RuntimeError('temporary-tools archive digest not bound to export evidence')
     print('[native-verify] Archive checksum verified; scanning members', flush=True)
     inventory = archive_inventory(archive)
     if (evidence.get('target') != 'x86_64-distro-linux-gnu' or
             evidence.get('handoff', {}).get('members') != len(inventory)):
-        raise RuntimeError('M2 export identity or inventory mismatch')
+        raise RuntimeError('temporary-tools export identity or inventory mismatch')
     print(f'[native-verify] Verified {len(inventory)} archive members', flush=True)
     root, state = project / 'root', project / '.distro-bootstrap'
     if project.is_symlink() or root.is_symlink() or state.is_symlink():
@@ -229,7 +229,7 @@ def main(argv=None):
     print('[native-verify] Imported root verified; checking package manifest', flush=True)
     manifest = json.loads(package_runner.MANIFEST.read_text())
     if len(manifest['packages']) != 10:
-        raise RuntimeError('unexpected M2 package closure')
+        raise RuntimeError('unexpected temporary-tools package closure')
     package_names = [p['name'] for p in manifest['packages']]
     report = {'schema_version': 1, 'status': 'incomplete', 'archive_sha256': observed,
               'packages': {}, 'member_count': len(inventory)}
@@ -287,7 +287,7 @@ def main(argv=None):
                 dep_paths[dep['name']] = dst.parent / dep_top
                 prereqs.append(dep['name'])
         # GCC needs its read-only source overlay to contain gmp/mpfr/mpc;
-        # build the overlay in the private writable work tree, not the M2 root.
+        # build the overlay in the private writable work tree, not the imported temporary-tools root.
         if prereqs:
             for dep in prereqs:
                 if (source_dir / dep).exists() or (source_dir / dep).is_symlink():
@@ -311,7 +311,7 @@ def main(argv=None):
         cmd += ['--', '/bin/bash', '--noprofile', '--norc', '/build/build.sh']
         log = run / 'build.log'
         print(f'[native-verify] {name}: streaming build output; log={log}', flush=True)
-        # Use the same binary-chunk live tee as the existing M2 package runner.
+        # Use the same binary-chunk live tee as the existing temporary-tools package runner.
         # Failure retains the complete log and aborts before stamping success.
         package_runner.common.run(cmd, log, timeout=7200)
         staged = verify_stage(run / 'stage')
