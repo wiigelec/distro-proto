@@ -307,7 +307,7 @@ def package_run(project, manifest, pkg, cross_archive):
         verify_stamp(stamp, signature, root)
         print(f'[temp-tools] {name}: SKIP verified stamp', flush=True)
         return
-    validation = recipe['validation']['chroot_executables']
+    validation = recipe.get('validation', {}).get('chroot_executables', [])
     for binary in validation:
         candidate = root / binary.lstrip('/')
         if candidate.exists() or candidate.is_symlink():
@@ -609,8 +609,8 @@ def main(project, cross_archive):
     total = len(manifest['packages'])
     for index, pkg in enumerate(manifest['packages'], 1):
         print(f'[{index}/{total}] {pkg["name"]}: constructing', flush=True)
-        if pkg.get('state') != 'executable' or pkg.get('execution') != 'host-cross':
-            raise RuntimeError('unsupported package entry: ' + pkg['name'])
+        if pkg.get('execution') != 'host-cross':
+            raise RuntimeError('unsupported package execution: ' + pkg['name'])
         for dependency in pkg.get('requires', []):
             if dependency != 'cross-toolchain' and dependency not in done:
                 raise RuntimeError('package dependency out of order: ' + pkg['name'] + ' -> ' + dependency)

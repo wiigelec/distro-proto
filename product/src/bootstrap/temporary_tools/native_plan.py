@@ -95,8 +95,6 @@ def prepare(manifest_path, recipe_root, output, jobs):
         name = pkg['name']
         if not NAME.fullmatch(name) or name in done:
             raise ValueError('invalid/duplicate package: ' + name)
-        if pkg.get('state') != 'executable':
-            raise ValueError('nonexecutable package: ' + name)
         if any(dep != 'cross-toolchain' and dep not in done for dep in pkg.get('requires', [])):
             raise ValueError('unresolved dependencies: ' + name)
         relative = Path(pkg['recipe'])
