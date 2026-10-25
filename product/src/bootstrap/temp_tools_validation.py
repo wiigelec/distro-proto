@@ -215,6 +215,101 @@ def verify_stage(stage):
     return files
 
 
+def verify_native_runtime(root, state):
+    """Execute native binaries and a C build entirely within the built root."""
+    import tempfile
+    if root.is_symlink() or not root.is_dir() or state.is_symlink():
+        raise RuntimeError('invalid native runtime verification paths')
+    for name in ('bash', 'gcc', 'make', 'as', 'ld'):
+        if not (root / 'usr/bin' / name).is_file():
+            raise RuntimeError('native runtime prerequisite missing: ' + name)
+    with tempfile.TemporaryDirectory(prefix='runtime-check-', dir=state) as scratch:
+        scratch = Path(scratch)
+        (scratch / 'smoke.c').write_text('int main(void) { return 0; }\n')
+        script = ('set -euo pipefail; '
+                  '/usr/bin/bash --version >/dev/null; '
+                  '/usr/bin/make --version >/dev/null; '
+                  '/usr/bin/gcc --version >/dev/null; '
+                  '/usr/bin/gcc /work/smoke.c -o /work/smoke; '
+                  '/work/smoke; '
+                  '/usr/bin/gcc -dumpmachine')
+        command = ['bwrap', '--die-with-parent', '--new-session', '--unshare-user',
+                   '--unshare-pid', '--unshare-net', '--unshare-ipc', '--unshare-uts',
+                   '--ro-bind', str(root), '/', '--proc', '/proc', '--dev', '/dev',
+                   '--tmpfs', '/tmp', '--bind', str(scratch), '/work',
+                   '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
+                   '--setenv', 'HOME', '/work', '--setenv', 'LC_ALL', 'C',
+                   '--', '/usr/bin/bash', '--noprofile', '--norc', '-c', script]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+        if result.returncode:
+            raise RuntimeError('isolated native compiler/runtime check failed: ' + result.stderr[-1200:])
+        target = result.stdout.strip().splitlines()[-1]
+        if target != 'x86_64-distro-linux-gnu':
+            raise RuntimeError('native compiler target mismatch: ' + target)
+        return {'target': target, 'compiler_link_and_execution': 'passed',
+                'isolated_execution': 'passed'}
+
+
+def verify_native_elf_closure(root):
+    """Fail when ELF runtime interpreters or DT_NEEDED libraries are absent."""
+    import re
+    roots = ('lib', 'lib64', 'usr/lib', 'usr/lib64')
+    scanned = 0
+    for path in root.rglob('*'):
+        if path.is_symlink() or not path.is_file():
+            continue
+        with path.open('rb') as stream:
+            if stream.read(4) != b'\x7fELF':
+                continue
+        scanned += 1
+        program = subprocess.run(['readelf', '-l', str(path)], capture_output=True, text=True)
+        dynamic = subprocess.run(['readelf', '-d', str(path)], capture_output=True, text=True)
+        if program.returncode or dynamic.returncode:
+            raise RuntimeError('unreadable native ELF: ' + str(path.relative_to(root)))
+        for interpreter in re.findall(r'Requesting program interpreter: ([^] ]+)', program.stdout):
+            if not interpreter.startswith('/') or not (root / interpreter.lstrip('/')).exists():
+                raise RuntimeError('native ELF interpreter absent: ' + interpreter)
+        for library in re.findall(r'\(NEEDED\).*?\[([^]]+)\]', dynamic.stdout):
+            if '/' in library or not any((root / d / library).exists() for d in roots):
+                raise RuntimeError('native ELF dependency absent: ' + library +
+                                   ' required by ' + str(path.relative_to(root)))
+    if scanned == 0:
+        raise RuntimeError('native root contains no ELF files')
+    return {'elf_files_scanned': scanned, 'declared_runtime_dependencies': 'present'}
+
+
+def export_native_root(root, artifacts, input_digest, source_proofs,
+                       package_names, runtime, closure):
+    """Publish an independently checked native handoff; never overwrite one."""
+    if artifacts.is_symlink():
+        raise RuntimeError('linked artifact directory')
+    artifacts.mkdir(exist_ok=True)
+    archive = artifacts / 'native-tools-root.tar.xz'
+    evidence = artifacts / 'native-tools-evidence.json'
+    if any(p.exists() or p.is_symlink() for p in (archive, evidence)):
+        raise RuntimeError('native handoff already exists; inspect before retry')
+    partial = artifacts / '.native-tools-root.tar.xz.partial'
+    if partial.exists() or partial.is_symlink():
+        raise RuntimeError('unfinished native handoff archive exists')
+    try:
+        with tarfile.open(partial, 'w:xz', format=tarfile.PAX_FORMAT) as bundle:
+            for path in sorted(root.rglob('*')):
+                bundle.add(path, arcname=path.relative_to(root).as_posix(), recursive=False)
+        # Independently compare the archive to the source root before publication.
+        count = package_runner.verify_temporary_tools_archive(root, partial)
+        record = {'schema_version': 1, 'status': 'verified',
+                  'target': 'x86_64-distro-linux-gnu',
+                  'input_archive_sha256': input_digest, 'sources': source_proofs,
+                  'packages': package_names, 'runtime': runtime, 'elf_closure': closure,
+                  'handoff': {'archive': str(archive), 'sha256': digest(partial),
+                              'members': count}}
+        os.link(partial, archive)
+    finally:
+        partial.unlink(missing_ok=True)
+    write_json(evidence, record)
+    return record['handoff']
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--root', type=Path, required=True, help='Fresh validation workspace')
@@ -373,26 +468,38 @@ def main(argv=None):
     else:
         shutil.copyfile(expected_assembler, assembler)
     construction = root / 'construction'
+    if construction.is_symlink():
+        raise RuntimeError('linked construction workspace')
     if construction.exists():
-        raise RuntimeError('prior construction workspace exists; inspect work logs before restarting construction')
-    construction.mkdir()
-    (root / 'proc').mkdir(exist_ok=True)
-    (root / 'dev').mkdir(exist_ok=True)
-    (root / 'tmp').mkdir(exist_ok=True)
-    command = ['bwrap', '--die-with-parent', '--new-session', '--unshare-user',
-               '--unshare-pid', '--unshare-net', '--unshare-ipc', '--unshare-uts',
-               '--bind', str(root), '/', '--proc', '/proc', '--dev', '/dev',
-               '--tmpfs', '/tmp', '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
-               '--setenv', 'LC_ALL', 'C', '--', '/usr/bin/bash',
-               '/inputs/native_assemble.sh', '/inputs/scripts/plan.tsv',
-               '/construction/root', '/construction/work']
-    log = state / 'native-construction.log'
-    print('[native-verify] Constructing fresh root; streaming output: ' + str(log), flush=True)
-    package_runner.common.run(command, log, timeout=7200 * len(manifest['packages']))
+        if not construction.is_dir():
+            raise RuntimeError('invalid construction workspace')
+        print('[native-verify] Resuming verification of existing native root', flush=True)
+    else:
+        construction.mkdir()
+        (root / 'proc').mkdir(exist_ok=True)
+        (root / 'dev').mkdir(exist_ok=True)
+        (root / 'tmp').mkdir(exist_ok=True)
+        command = ['bwrap', '--die-with-parent', '--new-session', '--unshare-user',
+                   '--unshare-pid', '--unshare-net', '--unshare-ipc', '--unshare-uts',
+                   '--bind', str(root), '/', '--proc', '/proc', '--dev', '/dev',
+                   '--tmpfs', '/tmp', '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
+                   '--setenv', 'LC_ALL', 'C', '--', '/usr/bin/bash',
+                   '/inputs/native_assemble.sh', '/inputs/scripts/plan.tsv',
+                   '/construction/root', '/construction/work']
+        log = state / 'native-construction.log'
+        print('[native-verify] Constructing fresh root; streaming output: ' + str(log), flush=True)
+        package_runner.common.run(command, log, timeout=7200 * len(manifest['packages']))
     status_file = construction / 'work' / 'construction.status'
     if not status_file.is_file() or status_file.read_text().strip() != 'assembled-unverified':
         raise RuntimeError('native assembler did not report a complete build')
     output = construction / 'root'
+    if output.is_symlink() or not output.is_dir():
+        raise RuntimeError('missing or linked native output root')
+    installed = construction / 'work' / 'installed-packages'
+    if installed.is_symlink() or not installed.is_file():
+        raise RuntimeError('missing native package completion inventory')
+    if installed.read_text().splitlines() != package_names:
+        raise RuntimeError('native package completion inventory differs from manifest')
     checks = {}
     for pkg in manifest['packages']:
         recipe = json.loads((package_runner.HERE / pkg['recipe']).read_text())
@@ -410,13 +517,25 @@ def main(argv=None):
               'missing_proofs': ['fresh-root runtime execution and compiler/linker smoke',
                                  'complete runtime/library closure and provenance']}
     write_json(project / 'artifacts/temp-tools-native-validation.json', report)
-    print('[native-verify] Fresh root constructed; runtime acceptance not yet proven', flush=True)
-    # An assembled root is not a validated native handoff. Do not report success
-    # before independent runtime, compiler/linker, and dependency checks pass.
-    raise RuntimeError(
-        'native rebuild is incomplete: ' + ', '.join(report['missing_proofs'])
-        + '; no accepted native handoff has been exported'
-    )
+    print('[native-verify] Native root assembled; checking runtime and provenance', flush=True)
+    try:
+        runtime = verify_native_runtime(output, state)
+        closure = verify_native_elf_closure(output)
+        report['runtime'] = runtime
+        report['elf_closure'] = closure
+        report['missing_proofs'] = []
+        # Export must be last: no accepted artifact until all verification passes.
+        handoff = export_native_root(output, project / 'artifacts', observed, source_proofs,
+                                     package_names, runtime, closure)
+        report['handoff'] = handoff
+        report['status'] = 'verified'
+        write_json(project / 'artifacts/temp-tools-native-validation.json', report)
+    except Exception as exc:
+        report['verification_error'] = str(exc)
+        write_json(project / 'artifacts/temp-tools-native-validation.json', report)
+        raise
+    print('[native-verify] Native handoff verified: ' + handoff['archive'], flush=True)
+    return 0
 
 
 if __name__ == '__main__':
