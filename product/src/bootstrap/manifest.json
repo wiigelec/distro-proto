@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "closure_complete": true,
+  "closure_complete": false,
   "target": "x86_64-distro-linux-gnu",
   "roots": ["gcc", "glibc"],
   "packages": [

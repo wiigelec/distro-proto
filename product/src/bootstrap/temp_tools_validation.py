@@ -320,10 +320,16 @@ def main(argv=None):
                  'staged': staged, 'status': 'passed'}
         write_json(stamp, proof)
         report['packages'][name] = proof
-    report['status'] = 'passed'
+    report['status'] = 'staged-native-builds-only'
+    report['m2_self_replication'] = 'not-proven'
+    report['missing_proofs'] = [
+        'generation A native orchestration without host Python dispatch',
+        'fresh generation B installation of complete declared closure',
+        'generation B runtime, compiler, linker and build procedure validation',
+    ]
     write_json(project / 'artifacts/temp-tools-native-validation.json', report)
-    print('[native-verify] PASS: ' + ', '.join(package_names), flush=True)
-    return 0
+    print('[native-verify] INCOMPLETE: staged native builds do not constitute M2 A-to-B replication', flush=True)
+    return 1
 
 
 if __name__ == '__main__':
