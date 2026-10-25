@@ -70,13 +70,26 @@ for (( i=0; i<${#names[@]}; i++ )); do
     fi
     shopt -s dotglob nullglob globstar
     count=0
-    # A collision is rejected before any file from this package is copied.
+    # A package cannot install a link or special file until ownership-aware
+    # link handling is implemented. Refuse the entire payload before copying.
     for item in "$stage"/**; do
         [[ "$item" == "$stage" ]] && continue
         relative=${item#"$stage"/}
         target="$destination/$relative"
-        if [[ -d "$item" && ! -L "$item" ]]; then
-            if [[ -e "$target" && ( ! -d "$target" || -L "$target" ) ]]; then
+        if [[ -L "$item" || ( ! -d "$item" && ! -f "$item" ) ]]; then
+            echo "unsupported staged object: $relative" >&2
+            exit 1
+        fi
+        ancestor=${target%/*}
+        while [[ "$ancestor" != "$destination" ]]; do
+            if [[ -L "$ancestor" || ( -e "$ancestor" && ! -d "$ancestor" ) ]]; then
+                echo "unsafe destination ancestor: $relative" >&2
+                exit 1
+            fi
+            ancestor=${ancestor%/*}
+        done
+        if [[ -d "$item" ]]; then
+            if [[ -e "$target" && ! -d "$target" ]]; then
                 echo "directory collision: $relative" >&2
                 exit 1
             fi
@@ -92,7 +105,12 @@ for (( i=0; i<${#names[@]}; i++ )); do
         echo "empty package payload: $name" >&2
         exit 1
     fi
-    # Copy native staged filesystem into the new output root.
+    for item in "$stage"/*; do
+        if [[ "${item##*/}" != usr ]]; then
+            echo "unexpected payload outside /usr" >&2
+            exit 1
+        fi
+    done
     /usr/bin/cp -a -- "$stage"/. "$destination"/
     printf '%s\n' "$name" >> "$work/installed-packages"
 done

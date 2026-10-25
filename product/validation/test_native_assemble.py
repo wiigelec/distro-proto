@@ -56,6 +56,24 @@ class NativeAssemblyTests(unittest.TestCase):
             {'build.sh': 'exit 0\n'})
         self.assertNotEqual(code, 0)
 
+    def test_staged_symlink_is_rejected(self):
+        script = ('mkdir -p "$DISTRO_STAGE/usr/share"\n'
+                  'ln -s /tmp "$DISTRO_STAGE/usr/share/redirect"\n'
+                  'printf ok > "$DISTRO_STAGE/usr/share/example"\n')
+        code, status, _ = self.run_case(
+            'example\t{base}/build.sh\n', {'build.sh': script})
+        self.assertNotEqual(code, 0)
+        self.assertEqual(status, 'incomplete')
+
+    def test_fifo_is_rejected(self):
+        script = ('mkdir -p "$DISTRO_STAGE/usr/share"\n'
+                  'mkfifo "$DISTRO_STAGE/usr/share/channel"\n'
+                  'printf ok > "$DISTRO_STAGE/usr/share/example"\n')
+        code, status, _ = self.run_case(
+            'example\t{base}/build.sh\n', {'build.sh': script})
+        self.assertNotEqual(code, 0)
+        self.assertEqual(status, 'incomplete')
+
 
 if __name__ == '__main__':
     unittest.main()
