@@ -134,6 +134,13 @@ for (( i=0; i<${#names[@]}; i++ )); do
     /usr/bin/cp -a -- "$stage"/. "$destination"/
     printf '%s\n' "$name" >> "$work/installed-packages"
 done
+# Construct the merged-/usr runtime lookup path from the native package stage.
+# The linker and libraries must still be provided by declared package builds.
+if [[ -e "$destination/lib64" || -L "$destination/lib64" ]]; then
+    echo 'unexpected pre-existing native runtime link' >&2
+    exit 1
+fi
+/usr/bin/ln -s usr/lib64 "$destination/lib64"
 # Do not report construction completion if the new root cannot load its
 # own native executables. The source of these components must be part of the
 # declared native reconstruction rather than an implicit host or producer copy.

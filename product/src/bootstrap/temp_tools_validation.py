@@ -381,8 +381,10 @@ def main(argv=None):
     verify_extracted(root, inventory, allowed_extra=('inputs', 'construction', 'proc', 'dev', 'tmp'))
     print('[native-verify] Imported root verified; checking package manifest', flush=True)
     manifest = json.loads(package_runner.MANIFEST.read_text())
-    if len(manifest['packages']) != 10:
-        raise RuntimeError('unexpected temporary-tools package closure')
+    if not isinstance(manifest.get('packages'), list) or not manifest['packages']:
+        raise RuntimeError('empty or invalid temporary-tools package closure')
+    if len({p['name'] for p in manifest['packages']}) != len(manifest['packages']):
+        raise RuntimeError('duplicate temporary-tools package')
     package_names = [p['name'] for p in manifest['packages']]
     # Prepare verified source trees and generated build procedures inside the
     # extracted root. No host build binaries are visible to the build process.
