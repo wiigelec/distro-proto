@@ -411,7 +411,12 @@ def main(argv=None):
                                  'complete runtime/library closure and provenance']}
     write_json(project / 'artifacts/temp-tools-native-validation.json', report)
     print('[native-verify] Fresh root constructed; runtime acceptance not yet proven', flush=True)
-    return 0
+    # An assembled root is not a validated native handoff. Do not report success
+    # before independent runtime, compiler/linker, and dependency checks pass.
+    raise RuntimeError(
+        'native rebuild is incomplete: ' + ', '.join(report['missing_proofs'])
+        + '; no accepted native handoff has been exported'
+    )
 
 
 if __name__ == '__main__':
