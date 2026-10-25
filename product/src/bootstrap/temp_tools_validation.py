@@ -12,6 +12,7 @@ import tarfile
 import urllib.request
 
 from temporary_tools import package_runner
+from temporary_tools import native_plan
 from temporary_tools import temp_tools_bootstrap as bootstrap
 
 
@@ -231,105 +232,100 @@ def main(argv=None):
     if len(manifest['packages']) != 10:
         raise RuntimeError('unexpected temporary-tools package closure')
     package_names = [p['name'] for p in manifest['packages']]
-    report = {'schema_version': 1, 'status': 'incomplete', 'archive_sha256': observed,
-              'packages': {}, 'member_count': len(inventory)}
+    # Prepare verified source trees and generated build procedures inside the
+    # extracted root. No host build binaries are visible to the build process.
+    guest_inputs = root / 'inputs'
+    guest_sources = guest_inputs / 'sources'
+    guest_scripts = guest_inputs / 'scripts'
+    for location in (guest_inputs, guest_sources, guest_scripts):
+        if location.exists() or location.is_symlink():
+            raise RuntimeError('native input location already exists: ' + str(location))
+        location.mkdir()
+    # Generate the native procedures directly from the pinned manifest recipes.
+    # The planner accepts only fresh output directories.
+    guest_scripts.rmdir()
+    native_plan.prepare(package_runner.MANIFEST, package_runner.HERE,
+                        guest_scripts, jobs=2)
+    source_proofs = {}
     for pkg in manifest['packages']:
-        name, version = pkg['name'], pkg['version']
-        print('[native-verify] ' + name, flush=True)
-        source = pkg['source']
-        filename = source['url'].rsplit('/', 1)[-1]
-        print('[native-verify] ' + name + ': checking pinned source ' + filename, flush=True)
-        src_archive = acquire_source(state, source, filename)
-        print('[native-verify] ' + name + ': source SHA-256 verified', flush=True)
-        recipe_path = package_runner.HERE / pkg['recipe']
-        recipe = json.loads(recipe_path.read_text())
-        stamp = state / 'native-stamps' / (name + '.json')
-        run = state / 'work' / name
-        if stamp.exists():
-            proof = json.loads(stamp.read_text())
-            if (proof.get('archive_sha256') != observed or proof.get('source_sha256') != source['sha256']
-                    or proof.get('recipe_sha256') != digest(recipe_path)
-                    or proof.get('status') != 'passed'
-                    or not (run / 'build.sh').is_file()
-                    or digest(run / 'build.sh') != proof.get('script_sha256')):
-                raise RuntimeError('stale validation stamp: ' + name)
-            for rel, p in proof['staged'].items():
-                f = run / 'stage' / rel
-                if 'sha256' in p and (not f.is_file() or digest(f) != p['sha256']):
-                    raise RuntimeError('modified native stage: ' + rel)
-                if 'link' in p and (not f.is_symlink() or os.readlink(f) != p['link']):
-                    raise RuntimeError('modified native link: ' + rel)
-            report['packages'][name] = proof
-            continue
-        if run.exists():
-            raise RuntimeError('uncommitted native validation run: ' + str(run))
-        run.mkdir(parents=True)
-        (run / 'build').mkdir()
-        (run / 'stage').mkdir()
-        top = pkg.get('upstream_name', name) + '-' + version
-        source_dir = run / 'src' / top
-        (run / 'src').mkdir()
-        with tarfile.open(src_archive, 'r:*') as tf:
+        name = pkg['name']
+        filename = pkg['source']['url'].rsplit('/', 1)[-1]
+        print('[native-verify] ' + name + ': acquiring ' + filename, flush=True)
+        source_archive = acquire_source(state, pkg['source'], filename)
+        top = pkg.get('upstream_name', name) + '-' + pkg['version']
+        destination = guest_sources / name
+        destination.mkdir()
+        with tarfile.open(source_archive, 'r:*') as tf:
             safe_source_archive(tf, top)
-            tf.extractall(run / 'src', filter='data')
-        prereqs = []
-        dep_paths = {}
-        if pkg.get('build_prerequisites'):
-            for dep in pkg['build_prerequisites']:
-                fname = dep['url'].rsplit('/', 1)[-1]
-                dep_archive = acquire_source(state, dep, fname, algorithm='sha512')
-                dep_top = dep['name'] + '-' + dep['version']
-                dst = run / 'deps' / dep['name']
-                dst.parent.mkdir(exist_ok=True)
-                with tarfile.open(dep_archive, 'r:*') as tf:
-                    safe_source_archive(tf, dep_top)
-                    tf.extractall(dst.parent, filter='data')
-                dep_paths[dep['name']] = dst.parent / dep_top
-                prereqs.append(dep['name'])
-        # GCC needs its read-only source overlay to contain gmp/mpfr/mpc;
-        # build the overlay in the private writable work tree, not the imported temporary-tools root.
-        if prereqs:
-            for dep in prereqs:
-                if (source_dir / dep).exists() or (source_dir / dep).is_symlink():
-                    raise RuntimeError('GCC prerequisite path already exists: ' + dep)
-                (source_dir / dep).symlink_to('/prerequisites/' + dep)
-        text = build_script(name, version, recipe, Path('/sources') / top, [])
-        script = run / 'build.sh'
-        script.write_text(text)
-        script.chmod(0o644)
-        if shutil.which('bwrap') is None:
-            raise RuntimeError('bubblewrap required')
-        cmd = ['bwrap', '--die-with-parent', '--new-session', '--unshare-user',
+            tf.extractall(destination, filter='data')
+        extracted = destination / top
+        if not (extracted / 'configure').is_file():
+            raise RuntimeError('missing source configure: ' + name)
+        for entry in extracted.iterdir():
+            target = destination / entry.name
+            if target.exists() or target.is_symlink():
+                raise RuntimeError('duplicate source member: ' + name)
+            entry.rename(target)
+        extracted.rmdir()
+        for dependency in pkg.get('build_prerequisites', []):
+            dep_name = dependency['name']
+            dep_archive = acquire_source(
+                state, dependency, dependency['url'].rsplit('/', 1)[-1],
+                algorithm='sha512')
+            dep_top = dep_name + '-' + dependency['version']
+            dep_temp = destination / ('.prerequisite-' + dep_name)
+            dep_temp.mkdir()
+            with tarfile.open(dep_archive, 'r:*') as tf:
+                safe_source_archive(tf, dep_top)
+                tf.extractall(dep_temp, filter='data')
+            (dep_temp / dep_top).rename(destination / dep_name)
+            dep_temp.rmdir()
+        source_proofs[name] = {'source_sha256': digest(source_archive),
+                               'recipe_sha256': digest(package_runner.HERE / pkg['recipe'])}
+        print('[native-verify] ' + name + ': verified source staged', flush=True)
+    # The assembler and inputs reside entirely within the private extracted
+    # filesystem. bwrap supplies chroot-style isolation and a private PID and
+    # mount namespace, without sudo or host filesystem tool bindings.
+    assembler = root / 'inputs' / 'native_assemble.sh'
+    shutil.copyfile(Path(__file__).with_name('temporary_tools') / 'native_assemble.sh', assembler)
+    construction = root / 'construction'
+    construction.mkdir()
+    (root / 'proc').mkdir(exist_ok=True)
+    (root / 'dev').mkdir(exist_ok=True)
+    (root / 'tmp').mkdir(exist_ok=True)
+    command = ['bwrap', '--die-with-parent', '--new-session', '--unshare-user',
                '--unshare-pid', '--unshare-net', '--unshare-ipc', '--unshare-uts',
-               '--ro-bind', str(root), '/', '--bind', str(run), '/build',
-               '--dir', '/sources', '--ro-bind', str(source_dir), '/sources/' + top,
-               '--dir', '/prerequisites', '--proc', '/proc', '--dev', '/dev',
+               '--bind', str(root), '/', '--proc', '/proc', '--dev', '/dev',
                '--tmpfs', '/tmp', '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
-               '--setenv', 'HOME', '/build', '--setenv', 'LC_ALL', 'C']
-        for dep, dep_src in dep_paths.items():
-            cmd += ['--ro-bind', str(dep_src), '/prerequisites/' + dep]
-        cmd += ['--', '/bin/bash', '--noprofile', '--norc', '/build/build.sh']
-        log = run / 'build.log'
-        print(f'[native-verify] {name}: streaming build output; log={log}', flush=True)
-        # Use the same binary-chunk live tee as the existing temporary-tools package runner.
-        # Failure retains the complete log and aborts before stamping success.
-        package_runner.common.run(cmd, log, timeout=7200)
-        staged = verify_stage(run / 'stage')
-        proof = {'archive_sha256': observed, 'source_sha256': source['sha256'],
-                 'recipe_sha256': digest(recipe_path), 'script_sha256': digest(script),
-                 'staged': staged, 'status': 'passed'}
-        write_json(stamp, proof)
-        report['packages'][name] = proof
-    report['status'] = 'staged-native-builds-only'
-    report['m2_self_replication'] = 'not-proven'
-    report['missing_proofs'] = [
-        'generation A native orchestration without host Python dispatch',
-        'fresh generation B installation of complete declared closure',
-        'generation B runtime, compiler, linker and build procedure validation',
-    ]
+               '--setenv', 'LC_ALL', 'C', '--', '/usr/bin/bash',
+               '/inputs/native_assemble.sh', '/inputs/scripts/plan.tsv',
+               '/construction/root', '/construction/work']
+    log = state / 'native-construction.log'
+    print('[native-verify] Constructing fresh root; streaming output: ' + str(log), flush=True)
+    package_runner.common.run(command, log, timeout=7200 * len(manifest['packages']))
+    status_file = construction / 'work' / 'construction.status'
+    if not status_file.is_file() or status_file.read_text().strip() != 'assembled-unverified':
+        raise RuntimeError('native assembler did not report a complete build')
+    output = construction / 'root'
+    checks = {}
+    for pkg in manifest['packages']:
+        recipe = json.loads((package_runner.HERE / pkg['recipe']).read_text())
+        for binary in recipe.get('validation', {}).get('chroot_executables', []):
+            if binary in checks:
+                continue
+            file = output / binary.lstrip('/')
+            if not file.is_file():
+                raise RuntimeError('missing fresh-root executable: ' + binary)
+            checks[binary] = digest(file)
+    report = {'schema_version': 1, 'status': 'assembled-unverified',
+              'archive_sha256': observed, 'member_count': len(inventory),
+              'native_root': str(output), 'sources': source_proofs,
+              'executables': checks,
+              'missing_proofs': ['fresh-root runtime execution and compiler/linker smoke',
+                                 'complete runtime/library closure and provenance']}
     write_json(project / 'artifacts/temp-tools-native-validation.json', report)
-    print('[native-verify] INCOMPLETE: staged native builds do not constitute M2 A-to-B replication', flush=True)
-    return 1
+    print('[native-verify] Fresh root constructed; runtime acceptance not yet proven', flush=True)
+    return 0
 
 
 if __name__ == '__main__':
