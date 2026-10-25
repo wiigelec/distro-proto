@@ -70,16 +70,36 @@ for (( i=0; i<${#names[@]}; i++ )); do
     fi
     shopt -s dotglob nullglob globstar
     count=0
-    # A package cannot install a link or special file until ownership-aware
-    # link handling is implemented. Refuse the entire payload before copying.
+    # Only leaf symlinks with same-directory targets are supported. They are
+    # copied as links, never dereferenced during installation. A link may not
+    # appear as the parent of another staged or installed entry.
     for item in "$stage"/**; do
         [[ "$item" == "$stage" ]] && continue
         relative=${item#"$stage"/}
         target="$destination/$relative"
-        if [[ -L "$item" || ( ! -d "$item" && ! -f "$item" ) ]]; then
+        if [[ -L "$item" ]]; then
+            link_target=$(/usr/bin/readlink -- "$item") || exit 1
+            # A same-directory link cannot redirect through an absolute path
+            # or a parent directory. Multi-component links require separately
+            # audited root-relative resolution before they can be supported.
+            if [[ -z "$link_target" || "$link_target" == /* ||
+                  "$link_target" == . || "$link_target" == .. ||
+                  "$link_target" == */* ]]; then
+                echo "unsafe staged link: $relative" >&2
+                exit 1
+            fi
+        elif [[ ! -d "$item" && ! -f "$item" ]]; then
             echo "unsupported staged object: $relative" >&2
             exit 1
         fi
+        source_ancestor=${item%/*}
+        while [[ "$source_ancestor" != "$stage" ]]; do
+            if [[ -L "$source_ancestor" ]]; then
+                echo "staged link used as directory: $relative" >&2
+                exit 1
+            fi
+            source_ancestor=${source_ancestor%/*}
+        done
         ancestor=${target%/*}
         while [[ "$ancestor" != "$destination" ]]; do
             if [[ -L "$ancestor" || ( -e "$ancestor" && ! -d "$ancestor" ) ]]; then
@@ -88,7 +108,7 @@ for (( i=0; i<${#names[@]}; i++ )); do
             fi
             ancestor=${ancestor%/*}
         done
-        if [[ -d "$item" ]]; then
+        if [[ -d "$item" && ! -L "$item" ]]; then
             if [[ -e "$target" && ! -d "$target" ]]; then
                 echo "directory collision: $relative" >&2
                 exit 1

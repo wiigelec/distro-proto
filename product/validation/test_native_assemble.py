@@ -75,5 +75,24 @@ class NativeAssemblyTests(unittest.TestCase):
         self.assertEqual(status, 'incomplete')
 
 
+    def test_relative_leaf_symlink_installs_without_dereference(self):
+        script = ('mkdir -p "$DISTRO_STAGE/usr/bin"\n'
+                  'printf ok > "$DISTRO_STAGE/usr/bin/example"\n'
+                  'ln -s example "$DISTRO_STAGE/usr/bin/alias"\n')
+        code, status, _ = self.run_case(
+            'example\t{base}/build.sh\n', {'build.sh': script})
+        self.assertEqual(code, 0)
+        self.assertEqual(status, 'assembled-unverified')
+
+    def test_parent_traversal_symlink_rejected(self):
+        script = ('mkdir -p "$DISTRO_STAGE/usr/bin"\n'
+                  'printf ok > "$DISTRO_STAGE/usr/bin/example"\n'
+                  'ln -s ../etc "$DISTRO_STAGE/usr/bin/alias"\n')
+        code, status, _ = self.run_case(
+            'example\t{base}/build.sh\n', {'build.sh': script})
+        self.assertNotEqual(code, 0)
+        self.assertEqual(status, 'incomplete')
+
+
 if __name__ == '__main__':
     unittest.main()
