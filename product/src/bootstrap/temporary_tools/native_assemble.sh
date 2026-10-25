@@ -134,5 +134,16 @@ for (( i=0; i<${#names[@]}; i++ )); do
     /usr/bin/cp -a -- "$stage"/. "$destination"/
     printf '%s\n' "$name" >> "$work/installed-packages"
 done
+# Do not report construction completion if the new root cannot load its
+# own native executables. The source of these components must be part of the
+# declared native reconstruction rather than an implicit host or producer copy.
+if [[ ! -L "$destination/lib64" ||
+      $(/usr/bin/readlink -- "$destination/lib64") != usr/lib64 ||
+      ! -f "$destination/usr/lib64/ld-linux-x86-64.so.2" ||
+      ! -f "$destination/usr/lib64/libc.so.6" ||
+      ! -f "$destination/usr/bin/bash" ]]; then
+    echo 'native root missing declared runtime closure or filesystem links' >&2
+    exit 1
+fi
 printf 'assembled-unverified\n' > "$work/construction.status"
 echo 'Native root assembled; runtime and closure verification still required.'
