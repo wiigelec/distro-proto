@@ -96,7 +96,7 @@ def acquire_source(state, source, filename, algorithm='sha256'):
     if not re.fullmatch('[0-9a-f]{64}' if algorithm == 'sha256' else '[0-9a-f]{128}', expected):
         raise RuntimeError('invalid pinned source digest')
     url = source['url']
-    if (not url.startswith(('https://ftp.gnu.org/gnu/',
+    if (not url.startswith(('https://ftpmirror.gnu.org/',
                             'https://sourceware.org/pub/binutils/releases/',
                             'https://gcc.gnu.org/pub/gcc/releases/',
                             'https://gcc.gnu.org/pub/gcc/infrastructure/'))

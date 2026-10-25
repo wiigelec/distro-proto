@@ -29,7 +29,8 @@ def safe_source(pkg, state):
     if filename not in (f'{upstream}-{pkg["version"]}.tar.xz',
                         f'{upstream}-{pkg["version"]}.tar.gz'):
         raise RuntimeError('source archive filename differs from package identity')
-    if not source['url'].startswith(('https://ftp.gnu.org/gnu/',
+    if not source['url'].startswith(('https://ftpmirror.gnu.org/',
+                                     'https://sourceware.org/pub/binutils/releases/',
                                      'https://gcc.gnu.org/pub/gcc/releases/')):
         raise RuntimeError('source origin not approved: ' + source['url'])
     if not re.fullmatch(r'[a-f0-9]{64}', source['sha256']):

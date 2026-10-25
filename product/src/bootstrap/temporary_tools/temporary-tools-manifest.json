@@ -10,7 +10,7 @@
       "state": "executable",
       "execution": "host-cross",
       "source": {
-        "url": "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz",
+        "url": "https://ftpmirror.gnu.org/bash/bash-5.3.tar.gz",
         "sha256": "0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba"
       },
       "recipe": "recipes/temp-bash.json",
@@ -24,7 +24,7 @@
       "execution": "host-cross",
       "version": "9.10",
       "source": {
-        "url": "https://ftp.gnu.org/gnu/coreutils/coreutils-9.10.tar.xz",
+        "url": "https://ftpmirror.gnu.org/coreutils/coreutils-9.10.tar.xz",
         "sha256": "16535a9adf0b10037364e2d612aad3d9f4eca3a344949ced74d12faf4bd51d25"
       },
       "recipe": "recipes/temp-coreutils.json",
@@ -39,7 +39,7 @@
       "execution": "host-cross",
       "version": "4.10",
       "source": {
-        "url": "https://ftp.gnu.org/gnu/sed/sed-4.10.tar.xz",
+        "url": "https://ftpmirror.gnu.org/sed/sed-4.10.tar.xz",
         "sha256": "b8e72182b2ec96a3574e2998c47b7aaa64cc20ce000d8e9ac313cc07cecf28c7"
       },
       "recipe": "recipes/temp-sed.json",
@@ -55,7 +55,7 @@
       "execution": "host-cross",
       "version": "3.12",
       "source": {
-        "url": "https://ftp.gnu.org/gnu/grep/grep-3.12.tar.xz",
+        "url": "https://ftpmirror.gnu.org/grep/grep-3.12.tar.xz",
         "sha256": "2649b27c0e90e632eadcd757be06c6e9a4f48d941de51e7c0f83ff76408a07b9"
       },
       "recipe": "recipes/temp-grep.json",
@@ -72,7 +72,7 @@
       "state": "executable",
       "execution": "host-cross",
       "source": {
-        "url": "https://ftp.gnu.org/gnu/gawk/gawk-5.4.0.tar.xz",
+        "url": "https://ftpmirror.gnu.org/gawk/gawk-5.4.0.tar.xz",
         "sha256": "3dd430f0cd3b4428c6c3f6afc021b9cd3c1f8c93f7a688dc268ca428a90b4ac1"
       },
       "recipe": "recipes/temp-native-gawk.json",
@@ -88,7 +88,7 @@
       "state": "executable",
       "execution": "host-cross",
       "source": {
-        "url": "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz",
+        "url": "https://ftpmirror.gnu.org/make/make-4.4.1.tar.gz",
         "sha256": "dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3"
       },
       "recipe": "recipes/temp-native-make.json",
@@ -104,7 +104,7 @@
       "state": "executable",
       "execution": "host-cross",
       "source": {
-        "url": "https://ftp.gnu.org/gnu/diffutils/diffutils-3.12.tar.xz",
+        "url": "https://ftpmirror.gnu.org/diffutils/diffutils-3.12.tar.xz",
         "sha256": "7c8b7f9fc8609141fdea9cece85249d308624391ff61dedaf528fcb337727dfd"
       },
       "recipe": "recipes/temp-diffutils.json",
@@ -120,7 +120,7 @@
       "state": "executable",
       "execution": "host-cross",
       "source": {
-        "url": "https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz",
+        "url": "https://ftpmirror.gnu.org/tar/tar-1.35.tar.xz",
         "sha256": "4d62ff37342ec7aed748535323930c7cf94acf71c3591882b26a7ea50f3edc16"
       },
       "recipe": "recipes/temp-tar.json",
