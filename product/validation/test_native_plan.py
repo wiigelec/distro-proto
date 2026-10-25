@@ -34,6 +34,26 @@ class NativePlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'host-cross'):
             module.render_script({'name':'bash'},recipe,'x86_64-distro-linux-gnu',2)
 
+    def test_workspace_expansion_is_one_shell_word(self):
+        import subprocess
+        recipe = {'name': 'bash', 'execution': 'host-cross', 'steps': [
+            {'name': 'probe', 'argv': ['/work/src/configure',
+                                      'DESTDIR=/work/stage',
+                                      '--literal=$(touch /tmp/unwanted)']} ]}
+        generated = module.render_script({'name': 'bash'}, recipe,
+                                          'x86_64-distro-linux-gnu', 2)
+        last = generated.splitlines()[-1]
+        shell = 'set -- ' + last.replace('${DISTRO_WORK}/src/configure',
+                                         '${DISTRO_WORK}/src/configure') + '\n' + \
+                'printf "<%s>\\n" "$@"'
+        result = subprocess.run(['bash', '-c', shell],
+                                env={'DISTRO_WORK': '/tmp/work with spaces',
+                                     'DISTRO_STAGE': '/tmp/stage with spaces'},
+                                capture_output=True, text=True, check=True)
+        self.assertIn('</tmp/work with spaces/src/configure>', result.stdout)
+        self.assertIn('<DESTDIR=/tmp/stage with spaces>', result.stdout)
+        self.assertIn('<--literal=$(touch /tmp/unwanted)>', result.stdout)
+
     def test_missing_source_or_script_fails_closed(self):
         recipe={'name':'bash','execution':'host-cross','steps':[
           {'name':'configure','argv':['/work/src/configure','--foo={unknown}']}]}

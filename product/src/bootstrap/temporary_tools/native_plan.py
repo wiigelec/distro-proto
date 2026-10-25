@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 import re
-import shlex
 from pathlib import Path
 
 NAME = re.compile(r'[a-z0-9][a-z0-9+._-]*\Z')
@@ -62,13 +61,20 @@ def render_script(pkg, recipe, target, jobs):
             raise ValueError('empty translated recipe step: ' + name)
         if converted[0] == 'make':
             converted[0] = '/usr/bin/make'
-        # Quote shell metacharacters while allowing only two compiler-controlled
-        # environment expansions, never interpolating arbitrary script text.
+        # All arguments are shell words, including words containing paths.
+        # Expand only the two planner-owned variables, always under quotes;
+        # unquoted variable expansion would split paths containing whitespace.
         def quote(value):
-            if '${DISTRO_WORK}' in value or '${DISTRO_STAGE}' in value:
-                fragments = re.split(r'(\$\{DISTRO_(?:WORK|STAGE)\})', value)
-                return ''.join(f if f.startswith('${DISTRO_') else shlex.quote(f) for f in fragments)
-            return shlex.quote(value)
+            markers = {'${DISTRO_WORK}': '__DISTRO_WORK_TOKEN__',
+                       '${DISTRO_STAGE}': '__DISTRO_STAGE_TOKEN__'}
+            for variable, marker in markers.items():
+                value = value.replace(variable, marker)
+            # Quote shell metacharacters before restoring trusted expansions.
+            value = (value.replace('\\', '\\\\').replace('"', '\\"')
+                          .replace('$', '\\$').replace('`', '\\`'))
+            for variable, marker in markers.items():
+                value = value.replace(marker, variable)
+            return '"' + value + '"'
         lines.append(' '.join(quote(a) for a in converted))
     return '\n'.join(lines) + '\n'
 
