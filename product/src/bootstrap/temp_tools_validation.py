@@ -107,8 +107,17 @@ def acquire_source(state, source, filename, algorithm='sha256'):
     if partial.exists():
         raise RuntimeError('incomplete pinned source download: ' + filename)
     try:
+        print('[native-verify] Downloading pinned source: ' + filename, flush=True)
         with urllib.request.urlopen(url, timeout=120) as response, partial.open('xb') as output:
-            shutil.copyfileobj(response, output)
+            downloaded = 0
+            while True:
+                block = response.read(1024 * 1024)
+                if not block:
+                    break
+                output.write(block)
+                downloaded += len(block)
+                if downloaded // (16 * 1024 * 1024) != (downloaded - len(block)) // (16 * 1024 * 1024):
+                    print(f'[native-verify] {filename}: downloaded {downloaded // (1024 * 1024)} MiB', flush=True)
         if not verified(partial):
             raise RuntimeError('downloaded source digest mismatch: ' + filename)
         os.replace(partial, destination)
@@ -183,14 +192,17 @@ def main(argv=None):
     if evidence.get('status') != 'verified' and evidence.get('status') != 'passed':
         raise RuntimeError('M2 export evidence not verified')
     # The evidence schema is authoritative; explicitly refuse unknown formats.
+    print('[native-verify] Verifying M2 archive SHA-256: ' + str(archive), flush=True)
     observed = digest(archive)
     sha = evidence.get('handoff', {}).get('sha256')
-    if (evidence.get('target') != 'x86_64-distro-linux-gnu' or
-            evidence.get('handoff', {}).get('members') != len(archive_inventory(archive))):
-        raise RuntimeError('M2 export identity or inventory mismatch')
     if sha != observed:
         raise RuntimeError('M2 archive digest not bound to export evidence')
+    print('[native-verify] Archive checksum verified; scanning members', flush=True)
     inventory = archive_inventory(archive)
+    if (evidence.get('target') != 'x86_64-distro-linux-gnu' or
+            evidence.get('handoff', {}).get('members') != len(inventory)):
+        raise RuntimeError('M2 export identity or inventory mismatch')
+    print(f'[native-verify] Verified {len(inventory)} archive members', flush=True)
     root, state = project / 'root', project / '.distro-bootstrap'
     if project.is_symlink() or root.is_symlink() or state.is_symlink():
         raise RuntimeError('symlink validation workspace')
@@ -200,14 +212,21 @@ def main(argv=None):
             raise RuntimeError('fresh validation workspace required')
         root.mkdir(parents=True, exist_ok=True)
         state.mkdir(parents=True, exist_ok=True)
+        print('[native-verify] Extracting verified archive into isolated root', flush=True)
         with tarfile.open(archive, 'r:xz') as tf:
-            for member in bootstrap.archive_members(tf):
+            members = bootstrap.archive_members(tf)
+            for index, member in enumerate(members, 1):
                 tf.extract(member, root, filter='data')
+                if index % 250 == 0 or index == len(members):
+                    print(f'[native-verify] Extracted {index}/{len(members)} members', flush=True)
+        print('[native-verify] Checking extracted root against archive inventory', flush=True)
         verify_extracted(root, inventory)
         write_json(marker, {'archive_sha256': observed, 'member_count': len(inventory)})
     elif json.loads(marker.read_text()) != {'archive_sha256': observed, 'member_count': len(inventory)}:
         raise RuntimeError('validation root import marker mismatch')
+    print('[native-verify] Verifying imported root contents', flush=True)
     verify_extracted(root, inventory)
+    print('[native-verify] Imported root verified; checking package manifest', flush=True)
     manifest = json.loads(package_runner.MANIFEST.read_text())
     if len(manifest['packages']) != 10:
         raise RuntimeError('unexpected M2 package closure')
@@ -219,7 +238,9 @@ def main(argv=None):
         print('[native-verify] ' + name, flush=True)
         source = pkg['source']
         filename = source['url'].rsplit('/', 1)[-1]
+        print('[native-verify] ' + name + ': checking pinned source ' + filename, flush=True)
         src_archive = acquire_source(state, source, filename)
+        print('[native-verify] ' + name + ': source SHA-256 verified', flush=True)
         recipe_path = package_runner.HERE / pkg['recipe']
         recipe = json.loads(recipe_path.read_text())
         stamp = state / 'native-stamps' / (name + '.json')
