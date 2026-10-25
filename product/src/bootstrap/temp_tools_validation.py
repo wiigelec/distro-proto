@@ -97,6 +97,7 @@ def acquire_source(state, source, filename, algorithm='sha256'):
         raise RuntimeError('invalid pinned source digest')
     url = source['url']
     if (not url.startswith(('https://ftp.gnu.org/gnu/',
+                            'https://sourceware.org/pub/binutils/releases/',
                             'https://gcc.gnu.org/pub/gcc/releases/',
                             'https://gcc.gnu.org/pub/gcc/infrastructure/'))
             or url.rsplit('/', 1)[-1] != filename):

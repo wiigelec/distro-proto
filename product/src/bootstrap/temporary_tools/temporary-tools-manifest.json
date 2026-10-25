@@ -137,7 +137,7 @@
       "state": "executable",
       "execution": "host-cross",
       "source": {
-        "url": "https://ftp.gnu.org/gnu/binutils/binutils-2.47.tar.xz",
+        "url": "https://sourceware.org/pub/binutils/releases/binutils-2.47.tar.xz",
         "sha256": "154ab23b60070e8f27013c22977f1129425d67d1e8acd6e13010e617811e4cff"
       },
       "recipe": "recipes/temp-native-binutils.json",
