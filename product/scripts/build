@@ -79,6 +79,9 @@ def save_new(path: Path, report: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
+    native = commands.add_parser('temp-tools-validate', help='Validate native rebuilds from M2 archive')
+    native.add_argument('--root', type=Path, required=True)
+    native.add_argument('--temp-tools', type=Path, required=True)
     temporary = commands.add_parser('temp-tools', help='M2 Part 1 cross-build')
     temporary.add_argument('--root', type=Path, required=True)
     temporary.add_argument('--cross-toolchain', type=Path, required=True)
@@ -94,6 +97,9 @@ def main(argv: list[str] | None = None) -> int:
     compiler.add_argument('--signer-keyring', type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.command == 'temp-tools-validate':
+            from temp_tools_validation import main as validate_native
+            return validate_native(['--root', str(args.root), '--temp-tools', str(args.temp_tools)])
         if args.command == 'temp-tools':
             from temporary_tools.host_build import main as run_temporary_tools
             return run_temporary_tools(['--root', str(args.root),
