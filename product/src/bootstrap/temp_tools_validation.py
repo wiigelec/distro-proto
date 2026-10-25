@@ -9,6 +9,8 @@ import shlex
 import shutil
 import subprocess
 import tarfile
+import tempfile
+import time
 import urllib.request
 
 from temporary_tools import package_runner
@@ -53,7 +55,7 @@ def archive_inventory(archive):
     return result
 
 
-def verify_extracted(root, inventory):
+def verify_extracted(root, inventory, allowed_extra=()):
     for rel, (kind, proof) in inventory.items():
         p = root / rel
         if kind == 'file' and (not p.is_file() or p.is_symlink() or digest(p) != proof):
@@ -68,8 +70,16 @@ def verify_extracted(root, inventory):
         if kind == 'dir' and (not p.is_dir() or p.is_symlink()):
             raise RuntimeError('imported directory differs: ' + rel)
     actual = {p.relative_to(root).as_posix() for p in root.rglob('*')}
-    if actual != set(inventory):
-        raise RuntimeError('imported archive member inventory differs')
+    extras = actual - set(inventory)
+    allowed = tuple(allowed_extra)
+    for rel in extras:
+        if not any(rel == prefix or rel.startswith(prefix + '/') for prefix in allowed):
+            raise RuntimeError('unexpected imported-root entry: ' + rel)
+    # Never accept a symlink masquerading as an owned workspace boundary.
+    for prefix in allowed:
+        candidate = root / prefix
+        if candidate.is_symlink():
+            raise RuntimeError('linked native workspace: ' + prefix)
 
 
 def safe_source_archive(tf, top):
@@ -105,26 +115,55 @@ def acquire_source(state, source, filename, algorithm='sha256'):
             raise RuntimeError('cached pinned source changed: ' + filename)
         return destination
     partial = cache / (filename + '.partial')
-    if partial.exists():
-        raise RuntimeError('incomplete pinned source download: ' + filename)
-    try:
-        print('[native-verify] Downloading pinned source: ' + filename, flush=True)
-        with urllib.request.urlopen(url, timeout=120) as response, partial.open('xb') as output:
-            downloaded = 0
-            while True:
-                block = response.read(1024 * 1024)
-                if not block:
-                    break
-                output.write(block)
-                downloaded += len(block)
-                if downloaded // (16 * 1024 * 1024) != (downloaded - len(block)) // (16 * 1024 * 1024):
-                    print(f'[native-verify] {filename}: downloaded {downloaded // (1024 * 1024)} MiB', flush=True)
-        if not verified(partial):
-            raise RuntimeError('downloaded source digest mismatch: ' + filename)
-        os.replace(partial, destination)
-    finally:
+    if partial.is_symlink():
+        raise RuntimeError('linked partial source download: ' + filename)
+    # A partial file has no provenance. Restart it; completed files are reused
+    # only after their pinned digest is checked above.
+    for attempt in range(1, 5):
         partial.unlink(missing_ok=True)
+        try:
+            print(f'[native-verify] Downloading pinned source: {filename} (attempt {attempt}/4)', flush=True)
+            with urllib.request.urlopen(url, timeout=120) as response, partial.open('xb') as output:
+                downloaded = 0
+                while True:
+                    block = response.read(1024 * 1024)
+                    if not block:
+                        break
+                    output.write(block)
+                    downloaded += len(block)
+                    if downloaded // (16 * 1024 * 1024) != (downloaded - len(block)) // (16 * 1024 * 1024):
+                        print(f'[native-verify] {filename}: downloaded {downloaded // (1024 * 1024)} MiB', flush=True)
+            if not verified(partial):
+                raise RuntimeError('downloaded source digest mismatch: ' + filename)
+            os.replace(partial, destination)
+            return destination
+        except (TimeoutError, OSError) as exc:
+            if attempt == 4:
+                raise
+            print(f'[native-verify] {filename}: retrying after {exc}', flush=True)
+            time.sleep(min(attempt * 2, 10))
+        finally:
+            partial.unlink(missing_ok=True)
+    raise RuntimeError('source download retries exhausted: ' + filename)
     return destination
+
+
+def tree_digest(directory):
+    if not directory.is_dir() or directory.is_symlink():
+        raise RuntimeError('invalid staged source directory: ' + str(directory))
+    h = hashlib.sha256()
+    for item in sorted(directory.rglob('*')):
+        relative = item.relative_to(directory).as_posix()
+        if item.is_symlink():
+            kind, value = 'L', os.readlink(item)
+        elif item.is_dir():
+            kind, value = 'D', ''
+        elif item.is_file():
+            kind, value = 'F', digest(item)
+        else:
+            raise RuntimeError('unsupported staged source object: ' + relative)
+        h.update(json.dumps([relative, kind, value], separators=(',', ':')).encode() + b'\n')
+    return h.hexdigest()
 
 
 def build_script(name, version, recipe, source, prereqs):
@@ -226,7 +265,9 @@ def main(argv=None):
     elif json.loads(marker.read_text()) != {'archive_sha256': observed, 'member_count': len(inventory)}:
         raise RuntimeError('validation root import marker mismatch')
     print('[native-verify] Verifying imported root contents', flush=True)
-    verify_extracted(root, inventory)
+    # The original archive must remain byte-identical. Owned scratch trees
+    # added after import are allowed, but unrelated additions are rejected.
+    verify_extracted(root, inventory, allowed_extra=('inputs', 'construction', 'proc', 'dev', 'tmp'))
     print('[native-verify] Imported root verified; checking package manifest', flush=True)
     manifest = json.loads(package_runner.MANIFEST.read_text())
     if len(manifest['packages']) != 10:
@@ -237,15 +278,29 @@ def main(argv=None):
     guest_inputs = root / 'inputs'
     guest_sources = guest_inputs / 'sources'
     guest_scripts = guest_inputs / 'scripts'
-    for location in (guest_inputs, guest_sources, guest_scripts):
-        if location.exists() or location.is_symlink():
-            raise RuntimeError('native input location already exists: ' + str(location))
-        location.mkdir()
-    # Generate the native procedures directly from the pinned manifest recipes.
-    # The planner accepts only fresh output directories.
-    guest_scripts.rmdir()
-    native_plan.prepare(package_runner.MANIFEST, package_runner.HERE,
-                        guest_scripts, jobs=2)
+    if guest_inputs.is_symlink() or guest_sources.is_symlink() or guest_scripts.is_symlink():
+        raise RuntimeError('linked native input tree')
+    guest_inputs.mkdir(exist_ok=True)
+    guest_sources.mkdir(exist_ok=True)
+    if guest_scripts.exists():
+        if not guest_scripts.is_dir():
+            raise RuntimeError('invalid native script directory')
+        with tempfile.TemporaryDirectory(prefix='plan-verify-', dir=state) as temporary:
+            regenerated = Path(temporary) / 'scripts'
+            native_plan.prepare(package_runner.MANIFEST, package_runner.HERE,
+                                regenerated, jobs=2)
+            original = {p.name: digest(p) for p in guest_scripts.iterdir() if p.is_file() and not p.is_symlink()}
+            expected = {p.name: digest(p) for p in regenerated.iterdir()}
+            if original != expected or len(original) != len(list(guest_scripts.iterdir())):
+                raise RuntimeError('existing native plan differs from current recipes')
+        print('[native-verify] Reusing verified native plan', flush=True)
+    else:
+        native_plan.prepare(package_runner.MANIFEST, package_runner.HERE,
+                            guest_scripts, jobs=2)
+    completed_sources = state / 'prepared-sources'
+    if completed_sources.is_symlink():
+        raise RuntimeError('linked prepared-source evidence directory')
+    completed_sources.mkdir(exist_ok=True)
     source_proofs = {}
     for pkg in manifest['packages']:
         name = pkg['name']
@@ -254,6 +309,26 @@ def main(argv=None):
         source_archive = acquire_source(state, pkg['source'], filename)
         top = pkg.get('upstream_name', name) + '-' + pkg['version']
         destination = guest_sources / name
+        recipe_hash = digest(package_runner.HERE / pkg['recipe'])
+        archive_hash = digest(source_archive)
+        stamp = completed_sources / (name + '.json')
+        if stamp.is_symlink() or destination.is_symlink():
+            raise RuntimeError('linked source/stamp for package: ' + name)
+        if stamp.exists():
+            proof = json.loads(stamp.read_text())
+            if (proof.get('source_sha256') != archive_hash or
+                    proof.get('recipe_sha256') != recipe_hash or
+                    proof.get('tree_sha256') != tree_digest(destination)):
+                raise RuntimeError('completed source differs from pinned inputs: ' + name)
+            source_proofs[name] = {'source_sha256': archive_hash,
+                                   'recipe_sha256': recipe_hash}
+            print('[native-verify] ' + name + ': resuming verified source stage', flush=True)
+            continue
+        if destination.exists():
+            if not destination.is_dir():
+                raise RuntimeError('invalid partial source directory: ' + name)
+            print('[native-verify] ' + name + ': rebuilding unfinished source stage', flush=True)
+            shutil.rmtree(destination)
         destination.mkdir()
         with tarfile.open(source_archive, 'r:*') as tf:
             safe_source_archive(tf, top)
@@ -280,15 +355,25 @@ def main(argv=None):
                 tf.extractall(dep_temp, filter='data')
             (dep_temp / dep_top).rename(destination / dep_name)
             dep_temp.rmdir()
-        source_proofs[name] = {'source_sha256': digest(source_archive),
-                               'recipe_sha256': digest(package_runner.HERE / pkg['recipe'])}
+        source_proofs[name] = {'source_sha256': archive_hash,
+                               'recipe_sha256': recipe_hash}
+        write_json(stamp, dict(source_proofs[name], tree_sha256=tree_digest(destination)))
         print('[native-verify] ' + name + ': verified source staged', flush=True)
     # The assembler and inputs reside entirely within the private extracted
     # filesystem. bwrap supplies chroot-style isolation and a private PID and
     # mount namespace, without sudo or host filesystem tool bindings.
     assembler = root / 'inputs' / 'native_assemble.sh'
-    shutil.copyfile(Path(__file__).with_name('temporary_tools') / 'native_assemble.sh', assembler)
+    expected_assembler = Path(__file__).with_name('temporary_tools') / 'native_assemble.sh'
+    if assembler.is_symlink():
+        raise RuntimeError('linked native assembler')
+    if assembler.exists():
+        if digest(assembler) != digest(expected_assembler):
+            raise RuntimeError('existing native assembler differs from repository')
+    else:
+        shutil.copyfile(expected_assembler, assembler)
     construction = root / 'construction'
+    if construction.exists():
+        raise RuntimeError('prior construction workspace exists; inspect work logs before restarting construction')
     construction.mkdir()
     (root / 'proc').mkdir(exist_ok=True)
     (root / 'dev').mkdir(exist_ok=True)
