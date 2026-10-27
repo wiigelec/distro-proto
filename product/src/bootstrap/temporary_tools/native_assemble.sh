@@ -64,15 +64,60 @@ for (( i=0; i<${#names[@]}; i++ )); do
         exit 1
     fi
     stage="$package_work/stage"
-    # Honor glibc's /sbin layout without creating an independent /sbin tree.
-    # Reject ambiguous ownership rather than silently overwriting /usr/sbin.
+    # Combine legacy /sbin and canonical /usr/sbin within the scratch stage.
+    # Preflight every path: directory overlap is fine, but never overwrite a
+    # file, symlink, or non-directory. Do not dereference symlink ancestors.
     if [[ -e "$stage/sbin" || -L "$stage/sbin" ]]; then
         if [[ -L "$stage/sbin" || ! -d "$stage/sbin" ||
-              -e "$stage/usr/sbin" || -L "$stage/usr/sbin" ]]; then
-            echo "unsafe or conflicting staged /sbin: $name" >&2
+              -L "$stage/usr" || ! -d "$stage/usr" ||
+              -L "$stage/usr/sbin" ||
+              ( -e "$stage/usr/sbin" && ! -d "$stage/usr/sbin" ) ]]; then
+            echo "unsafe staged /sbin ownership: $name" >&2
             exit 1
         fi
-        /usr/bin/mv -- "$stage/sbin" "$stage/usr/sbin"
+        if [[ ! -e "$stage/usr/sbin" ]]; then
+            /usr/bin/mv -- "$stage/sbin" "$stage/usr/sbin"
+        else
+            shopt -s dotglob nullglob globstar
+            for item in "$stage/sbin"/**; do
+                rel=${item#"$stage/sbin"/}
+                target="$stage/usr/sbin/$rel"
+                parent=${target%/*}
+                while [[ "$parent" != "$stage/usr/sbin" ]]; do
+                    if [[ -L "$parent" || ( -e "$parent" && ! -d "$parent" ) ]]; then
+                        echo "unsafe staged /usr/sbin ancestor: $rel" >&2
+                        exit 1
+                    fi
+                    parent=${parent%/*}
+                done
+                if [[ -d "$item" && ! -L "$item" ]]; then
+                    if [[ -L "$target" || ( -e "$target" && ! -d "$target" ) ]]; then
+                        echo "staged /sbin directory conflict: $rel" >&2
+                        exit 1
+                    fi
+                elif [[ -f "$item" || -L "$item" ]]; then
+                    if [[ -e "$target" || -L "$target" ]]; then
+                        echo "staged /sbin file collision: $rel" >&2
+                        exit 1
+                    fi
+                else
+                    echo "unsupported staged /sbin entry: $rel" >&2
+                    exit 1
+                fi
+            done
+            # All collisions have been checked. Move leaves rather than
+            # copy over existing paths; preserve symlinks without following.
+            for item in "$stage/sbin"/**; do
+                rel=${item#"$stage/sbin"/}
+                target="$stage/usr/sbin/$rel"
+                if [[ -d "$item" && ! -L "$item" ]]; then
+                    /usr/bin/mkdir -p -- "$target"
+                else
+                    /usr/bin/mv -- "$item" "$target"
+                fi
+            done
+            /usr/bin/find "$stage/sbin" -depth -type d -exec /usr/bin/rmdir -- {} +
+        fi
     fi
     if [[ ! -d "$stage/usr" || -L "$stage/usr" ]]; then
         echo "missing staged usr tree: $name" >&2

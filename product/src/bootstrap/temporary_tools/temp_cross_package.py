@@ -142,9 +142,45 @@ def normalize_merged_sbin(stage):
     if usr.is_symlink() or not usr.is_dir():
         raise RuntimeError('staged /usr missing or unsafe')
     new = usr / 'sbin'
-    if new.exists() or new.is_symlink():
-        raise RuntimeError('ambiguous staged /sbin and /usr/sbin ownership')
-    old.rename(new)
+    if new.is_symlink() or (new.exists() and not new.is_dir()):
+        raise RuntimeError('unsafe staged /usr/sbin')
+    if not new.exists():
+        old.rename(new)
+        return
+    # Both directories are legitimate glibc outputs. Preflight every entry
+    # before mutating the scratch stage; directory overlap is permissible,
+    # but file/symlink collisions or traversals through links are not.
+    entries = sorted(old.rglob('*'), key=lambda p: (len(p.relative_to(old).parts), str(p)))
+    for source in entries:
+        target = new / source.relative_to(old)
+        if source.is_symlink():
+            kind = 'leaf'
+        elif source.is_dir():
+            kind = 'dir'
+        elif source.is_file():
+            kind = 'leaf'
+        else:
+            raise RuntimeError('unsupported staged /sbin entry: ' + str(source))
+        parent = target.parent
+        while parent != new:
+            if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
+                raise RuntimeError('unsafe staged /usr/sbin ancestor: ' + str(parent))
+            parent = parent.parent
+        if kind == 'dir':
+            if target.is_symlink() or (target.exists() and not target.is_dir()):
+                raise RuntimeError('staged /sbin directory conflict: ' + str(target))
+        elif target.exists() or target.is_symlink():
+            raise RuntimeError('staged /sbin file collision: ' + str(target))
+    for source in entries:
+        target = new / source.relative_to(old)
+        if source.is_dir() and not source.is_symlink():
+            target.mkdir(exist_ok=True)
+        else:
+            source.rename(target)
+    for source in sorted((p for p in entries if p.is_dir() and not p.is_symlink()),
+                         key=lambda p: len(p.parts), reverse=True):
+        source.rmdir()
+    old.rmdir()
 
 
 def ensure_merged_sbin(root):
