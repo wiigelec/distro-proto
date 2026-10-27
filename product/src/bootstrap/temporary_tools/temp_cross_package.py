@@ -130,9 +130,15 @@ def install(stage, root):
     """Preflight staged paths and reject overwrites; then copy selected payload."""
     src = stage / 'usr'
     if not src.is_dir() or src.is_symlink():
-        raise RuntimeError('Coreutils staged /usr missing')
+        raise RuntimeError('staged /usr missing or unsafe')
+    # Filesystem-layout policy is independent of package inventory.
+    for top in stage.iterdir():
+        if top.name not in ('usr', 'etc') or not top.is_dir() or top.is_symlink():
+            raise RuntimeError('unsupported staged top-level path: ' + top.name)
     entries = []
-    for path in sorted(src.rglob('*')):
+    for path in sorted(stage.rglob('*')):
+        if path == stage / 'usr' or path == stage / 'etc':
+            continue
         rel = path.relative_to(stage)
         if rel.as_posix() == 'usr/share/info/dir':
             continue

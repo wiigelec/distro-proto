@@ -126,8 +126,8 @@ for (( i=0; i<${#names[@]}; i++ )); do
         exit 1
     fi
     for item in "$stage"/*; do
-        if [[ "${item##*/}" != usr ]]; then
-            echo "unexpected payload outside /usr" >&2
+        if [[ "${item##*/}" != usr && "${item##*/}" != etc ]]; then
+            echo "unexpected payload outside supported roots" >&2
             exit 1
         fi
     done

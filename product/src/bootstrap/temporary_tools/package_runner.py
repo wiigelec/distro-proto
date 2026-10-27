@@ -208,8 +208,8 @@ def install_handoff(stage, root, policy, pkg, manifest, cross_archive):
     if not source_root.is_dir() or source_root.is_symlink():
         raise RuntimeError('missing or unsafe staged usr')
     for entry in stage.iterdir():
-        if entry.name != 'usr':
-            raise RuntimeError('unexpected staged payload outside usr: ' + entry.name)
+        if entry.name not in ('usr', 'etc') or not entry.is_dir() or entry.is_symlink():
+            raise RuntimeError('unsafe staged top-level payload: ' + entry.name)
     compiler_handoff = policy == {'compiler_private_prefix': 'manifest-target-and-version'}
     preserve_import = policy == {'imported_collision_policy': 'preserve-verified'}
     if not (compiler_handoff or preserve_import):
@@ -222,8 +222,10 @@ def install_handoff(stage, root, policy, pkg, manifest, cross_archive):
     if common.sha(archive) != marker['cross_archive_sha256']:
         raise RuntimeError('cross archive differs from verified import')
     colliding = []
-    for path in sorted(source_root.rglob('*')):
+    for path in sorted(stage.rglob('*')):
         rel = path.relative_to(stage).as_posix()
+        if rel == 'etc':
+            continue
         dest = root / rel
         if rel == 'usr/share/info/dir':
             continue
