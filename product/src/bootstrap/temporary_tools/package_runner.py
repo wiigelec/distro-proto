@@ -384,6 +384,9 @@ def package_run(project, manifest, pkg, cross_archive):
         argv = [arg.format_map(values) for arg in step['argv']]
         print(f'[temp-tools] {name}: step={step["name"]}', flush=True)
         common.run(guest + argv, log, timeout=7200)
+    # Normalize legacy installation paths in the package stage, never by
+    # overwriting the independently verified imported filesystem.
+    common.normalize_merged_sbin(work / 'stage')
     policy = pkg.get('installation', {})
     backup = []
     if policy:
@@ -411,6 +414,9 @@ def package_run(project, manifest, pkg, cross_archive):
             if not (root / binary.lstrip('/')).is_file():
                 raise RuntimeError('expected target executable absent: ' + binary)
             target_test(root, work, binary)
+        # No implicit conversion of imported real /lib64 or other M1 paths.
+        # /sbin can be linked only if its canonical destination now exists.
+        common.ensure_merged_sbin(root)
         if pkg.get('compiler_smoke'):
             native_compiler_smoke(root, work)
     except Exception:

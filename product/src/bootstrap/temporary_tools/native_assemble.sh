@@ -64,6 +64,16 @@ for (( i=0; i<${#names[@]}; i++ )); do
         exit 1
     fi
     stage="$package_work/stage"
+    # Honor glibc's /sbin layout without creating an independent /sbin tree.
+    # Reject ambiguous ownership rather than silently overwriting /usr/sbin.
+    if [[ -e "$stage/sbin" || -L "$stage/sbin" ]]; then
+        if [[ -L "$stage/sbin" || ! -d "$stage/sbin" ||
+              -e "$stage/usr/sbin" || -L "$stage/usr/sbin" ]]; then
+            echo "unsafe or conflicting staged /sbin: $name" >&2
+            exit 1
+        fi
+        /usr/bin/mv -- "$stage/sbin" "$stage/usr/sbin"
+    fi
     if [[ ! -d "$stage/usr" || -L "$stage/usr" ]]; then
         echo "missing staged usr tree: $name" >&2
         exit 1
@@ -139,6 +149,17 @@ for (( i=0; i<${#names[@]}; i++ )); do
     /usr/bin/cp -a -- "$stage"/. "$destination"/
     printf '%s\n' "$name" >> "$work/installed-packages"
 done
+# Construct aliases only after native package assembly. These paths must
+# never replace a package-owned file or directory.
+if [[ -e "$destination/sbin" || -L "$destination/sbin" ]]; then
+    echo 'native root contains conflicting /sbin' >&2
+    exit 1
+fi
+if [[ ! -d "$destination/usr/sbin" || -L "$destination/usr/sbin" ]]; then
+    echo 'native root missing /usr/sbin' >&2
+    exit 1
+fi
+/usr/bin/ln -s usr/sbin "$destination/sbin"
 # Construct the merged-/usr runtime lookup path from the native package stage.
 # The linker and libraries must still be provided by declared package builds.
 if [[ -e "$destination/lib64" || -L "$destination/lib64" ]]; then

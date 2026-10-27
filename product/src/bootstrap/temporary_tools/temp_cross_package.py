@@ -126,6 +126,42 @@ def sandbox(root, work, source_dir):
             cmd += ['--ro-bind', '/' + name, '/' + name]
     return cmd + ['--']
 
+def normalize_merged_sbin(stage):
+    """Relocate legacy /sbin stage entries under /usr/sbin, without overwrites.
+
+    The stage is scratch output, not the imported cross-toolchain root.
+    Reject mixed aliases and any non-directory source rather than merging
+    ambiguous package ownership. Run before collision and stamp checks.
+    """
+    old = stage / 'sbin'
+    if not old.exists() and not old.is_symlink():
+        return
+    if old.is_symlink() or not old.is_dir():
+        raise RuntimeError('unsafe staged /sbin')
+    usr = stage / 'usr'
+    if usr.is_symlink() or not usr.is_dir():
+        raise RuntimeError('staged /usr missing or unsafe')
+    new = usr / 'sbin'
+    if new.exists() or new.is_symlink():
+        raise RuntimeError('ambiguous staged /sbin and /usr/sbin ownership')
+    old.rename(new)
+
+
+def ensure_merged_sbin(root):
+    """Add /sbin -> usr/sbin only if root has no conflicting prior owner."""
+    alias = root / 'sbin'
+    if alias.is_symlink():
+        if os.readlink(alias) != 'usr/sbin':
+            raise RuntimeError('incorrect merged-/usr /sbin link')
+        return
+    if alias.exists():
+        raise RuntimeError('non-merged imported /sbin requires verified migration')
+    destination = root / 'usr/sbin'
+    if destination.is_symlink() or not destination.is_dir():
+        raise RuntimeError('missing or unsafe /usr/sbin for merged link')
+    alias.symlink_to('usr/sbin')
+
+
 def install(stage, root):
     """Preflight staged paths and reject overwrites; then copy selected payload."""
     src = stage / 'usr'
