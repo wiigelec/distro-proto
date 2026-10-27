@@ -99,7 +99,8 @@ def acquire_source(state, source, filename, algorithm='sha256'):
     if (not url.startswith(('https://ftpmirror.gnu.org/',
                             'https://sourceware.org/pub/binutils/releases/',
                             'https://gcc.gnu.org/pub/gcc/releases/',
-                            'https://gcc.gnu.org/pub/gcc/infrastructure/'))
+                            'https://gcc.gnu.org/pub/gcc/infrastructure/',
+                            'https://ftp.gnu.org/gnu/'))
             or url.rsplit('/', 1)[-1] != filename):
         raise RuntimeError('unapproved pinned source URL')
     cache = state / 'sources'
@@ -419,7 +420,8 @@ def main(argv=None):
         name = pkg['name']
         filename = pkg['source']['url'].rsplit('/', 1)[-1]
         print('[native-verify] ' + name + ': acquiring ' + filename, flush=True)
-        source_archive = acquire_source(state, pkg['source'], filename)
+        algorithm = 'sha512' if 'sha512' in pkg['source'] else 'sha256'
+        source_archive = acquire_source(state, pkg['source'], filename, algorithm=algorithm)
         top = pkg.get('upstream_name', name) + '-' + pkg['version']
         destination = guest_sources / name
         recipe_hash = digest(package_runner.HERE / pkg['recipe'])

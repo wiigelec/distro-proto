@@ -26,19 +26,48 @@ def safe_source(pkg, state):
     source = pkg['source']
     upstream = pkg.get('upstream_name', pkg['name'])
     filename = source['url'].rsplit('/', 1)[-1]
-    if filename not in (f'{upstream}-{pkg["version"]}.tar.xz',
-                        f'{upstream}-{pkg["version"]}.tar.gz'):
+    if filename not in (f'{upstream}-{pkg["version"]}{ext}'
+                        for ext in ('.tar.xz', '.tar.gz', '.tar.bz2')):
         raise RuntimeError('source archive filename differs from package identity')
     if not source['url'].startswith(('https://ftpmirror.gnu.org/',
                                      'https://sourceware.org/pub/binutils/releases/',
-                                     'https://gcc.gnu.org/pub/gcc/releases/')):
+                                     'https://gcc.gnu.org/pub/gcc/releases/',
+                                     'https://gcc.gnu.org/pub/gcc/infrastructure/',
+                                     'https://ftp.gnu.org/gnu/'))):
         raise RuntimeError('source origin not approved: ' + source['url'])
-    if not re.fullmatch(r'[a-f0-9]{64}', source['sha256']):
-        raise RuntimeError('source not SHA256-pinned')
+    algorithms = [kind for kind in ('sha256', 'sha512') if kind in source]
+    if len(algorithms) != 1:
+        raise RuntimeError('source must declare exactly one supported digest')
+    algorithm = algorithms[0]
+    expected = source[algorithm]
+    if not isinstance(expected, str) or not re.fullmatch(
+            r'[a-f0-9]{' + str(hashlib.new(algorithm).digest_size * 2) + r'}', expected):
+        raise RuntimeError('invalid verified source digest')
     cache = state / 'sources'
     cache.mkdir(parents=True, exist_ok=True)
     archive = cache / filename
-    common.obtain(source['url'], archive, source['sha256'])
+    def source_digest(file):
+        h = hashlib.new(algorithm)
+        with file.open('rb') as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b''):
+                h.update(block)
+        return h.hexdigest()
+    if archive.exists():
+        if archive.is_symlink() or not archive.is_file() or source_digest(archive) != expected:
+            raise RuntimeError('cached source digest mismatch: ' + filename)
+    else:
+        import urllib.request
+        partial = archive.with_name(filename + '.partial')
+        if partial.exists() or partial.is_symlink():
+            raise RuntimeError('unfinished source acquisition: ' + filename)
+        try:
+            with urllib.request.urlopen(source['url'], timeout=120) as response, partial.open('xb') as out:
+                shutil.copyfileobj(response, out)
+            if source_digest(partial) != expected:
+                raise RuntimeError('downloaded source digest mismatch: ' + filename)
+            os.replace(partial, archive)
+        finally:
+            partial.unlink(missing_ok=True)
     extracted = cache / f'extracted-{upstream}-{pkg["version"]}'
     top = f'{upstream}-{pkg["version"]}'
     if not extracted.exists():
