@@ -70,22 +70,27 @@ for (( i=0; i<${#names[@]}; i++ )); do
     fi
     shopt -s dotglob nullglob globstar
     count=0
-    # Only leaf symlinks with same-directory targets are supported. They are
-    # copied as links, never dereferenced during installation. A link may not
-    # appear as the parent of another staged or installed entry.
+    # Staged links may use relative paths, but must resolve within the fresh
+    # destination root. Never dereference a link while copying its payload.
+    # A link may not be the parent of another staged or installed entry.
     for item in "$stage"/**; do
         [[ "$item" == "$stage" ]] && continue
         relative=${item#"$stage"/}
         target="$destination/$relative"
         if [[ -L "$item" ]]; then
             link_target=$(/usr/bin/readlink -- "$item") || exit 1
-            # A same-directory link cannot redirect through an absolute path
-            # or a parent directory. Multi-component links require separately
-            # audited root-relative resolution before they can be supported.
-            if [[ -z "$link_target" || "$link_target" == /* ||
-                  "$link_target" == . || "$link_target" == .. ||
-                  "$link_target" == */* ]]; then
+            if [[ -z "$link_target" || "$link_target" == /* ]]; then
                 echo "unsafe staged link: $relative" >&2
+                exit 1
+            fi
+            # realpath -m canonicalizes even dangling destinations. Treat
+            # the proposed link relative to its eventual destination rather
+            # than the temporary staging area. Prefix comparison is bounded
+            # with '/' so similarly named sibling roots cannot be accepted.
+            link_destination=$(/usr/bin/realpath -m -- "${target%/*}/$link_target") || exit 1
+            if [[ "$link_destination" != "$destination/"* ||
+                  "$link_destination" == "$target" ]]; then
+                echo "staged link escapes native root or loops: $relative" >&2
                 exit 1
             fi
         elif [[ ! -d "$item" && ! -f "$item" ]]; then
