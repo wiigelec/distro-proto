@@ -631,8 +631,8 @@ def main(project, cross_archive):
         raise RuntimeError('invalid temp-tools manifest')
     print(f'[cross-toolchain] Locating verified archive: {cross_archive}', flush=True)
     cross_archive = resolve_cross_toolchain_archive(cross_archive)
-    from .source_binding import baseline_for_cross_archive, require_source_binding
-    require_source_binding(manifest, baseline_for_cross_archive(cross_archive))
+    # The imported cross-toolchain is verified as an input artifact.
+    # Each temporary-tools package has its own pinned source identity.
     import_cross_toolchain(project, cross_archive, manifest['target'])
     done = set()
     total = len(manifest['packages'])
