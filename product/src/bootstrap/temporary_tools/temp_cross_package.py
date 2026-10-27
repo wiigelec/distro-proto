@@ -198,18 +198,34 @@ def ensure_merged_sbin(root):
     alias.symlink_to('usr/sbin')
 
 
-def install(stage, root):
+def validate_staged_var(stage, package_name):
+    """Accept only glibc's observed /var/db/Makefile; never import runtime state."""
+    var = stage / 'var'
+    if not var.exists() and not var.is_symlink():
+        return
+    db = var / 'db'
+    makefile = db / 'Makefile'
+    if (package_name != 'glibc' or var.is_symlink() or not var.is_dir()
+            or db.is_symlink() or not db.is_dir()
+            or makefile.is_symlink() or not makefile.is_file()
+            or {entry.name for entry in var.iterdir()} != {'db'}
+            or {entry.name for entry in db.iterdir()} != {'Makefile'}):
+        raise RuntimeError('unsupported or unsafe staged /var payload')
+
+
+def install(stage, root, package_name=None):
     """Preflight staged paths and reject overwrites; then copy selected payload."""
     src = stage / 'usr'
     if not src.is_dir() or src.is_symlink():
         raise RuntimeError('staged /usr missing or unsafe')
-    # Filesystem-layout policy is independent of package inventory.
+    # Only glibc may contribute the explicitly audited /var/db/Makefile.
+    validate_staged_var(stage, package_name)
     for top in stage.iterdir():
-        if top.name not in ('usr', 'etc') or not top.is_dir() or top.is_symlink():
+        if top.name not in ('usr', 'etc', 'var') or not top.is_dir() or top.is_symlink():
             raise RuntimeError('unsupported staged top-level path: ' + top.name)
     entries = []
     for path in sorted(stage.rglob('*')):
-        if path == stage / 'usr' or path == stage / 'etc':
+        if path in (stage / 'usr', stage / 'etc', stage / 'var'):
             continue
         rel = path.relative_to(stage)
         if rel.as_posix() == 'usr/share/info/dir':

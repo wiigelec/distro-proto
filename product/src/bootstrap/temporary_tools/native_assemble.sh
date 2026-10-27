@@ -119,6 +119,29 @@ for (( i=0; i<${#names[@]}; i++ )); do
             /usr/bin/find "$stage/sbin" -depth -type d -exec /usr/bin/rmdir -- {} +
         fi
     fi
+    # /var is not merged into /usr. Permit only glibc's observed
+    # /var/db/Makefile and reject all other staged /var contents.
+    if [[ -e "$stage/var" || -L "$stage/var" ]]; then
+        if [[ "$name" != glibc || -L "$stage/var" || ! -d "$stage/var" ||
+              -L "$stage/var/db" || ! -d "$stage/var/db" ||
+              -L "$stage/var/db/Makefile" || ! -f "$stage/var/db/Makefile" ]]; then
+            echo "unsupported or unsafe staged /var: $name" >&2
+            exit 1
+        fi
+        shopt -s dotglob nullglob
+        for entry in "$stage/var"/*; do
+            if [[ "${entry##*/}" != db ]]; then
+                echo "unexpected staged /var entry: $name" >&2
+                exit 1
+            fi
+        done
+        for entry in "$stage/var/db"/*; do
+            if [[ "${entry##*/}" != Makefile ]]; then
+                echo "unexpected staged /var/db entry: $name" >&2
+                exit 1
+            fi
+        done
+    fi
     if [[ ! -d "$stage/usr" || -L "$stage/usr" ]]; then
         echo "missing staged usr tree: $name" >&2
         exit 1
@@ -186,7 +209,7 @@ for (( i=0; i<${#names[@]}; i++ )); do
         exit 1
     fi
     for item in "$stage"/*; do
-        if [[ "${item##*/}" != usr && "${item##*/}" != etc ]]; then
+        if [[ "${item##*/}" != usr && "${item##*/}" != etc && "${item##*/}" != var ]]; then
             echo "unexpected payload outside supported roots" >&2
             exit 1
         fi

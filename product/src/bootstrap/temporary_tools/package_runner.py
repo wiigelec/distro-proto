@@ -207,8 +207,9 @@ def install_handoff(stage, root, policy, pkg, manifest, cross_archive):
     source_root = stage / 'usr'
     if not source_root.is_dir() or source_root.is_symlink():
         raise RuntimeError('missing or unsafe staged usr')
+    common.validate_staged_var(stage, pkg['name'])
     for entry in stage.iterdir():
-        if entry.name not in ('usr', 'etc') or not entry.is_dir() or entry.is_symlink():
+        if entry.name not in ('usr', 'etc', 'var') or not entry.is_dir() or entry.is_symlink():
             raise RuntimeError('unsafe staged top-level payload: ' + entry.name)
     compiler_handoff = policy == {'compiler_private_prefix': 'manifest-target-and-version'}
     preserve_import = policy == {'imported_collision_policy': 'preserve-verified'}
@@ -224,7 +225,7 @@ def install_handoff(stage, root, policy, pkg, manifest, cross_archive):
     colliding = []
     for path in sorted(stage.rglob('*')):
         rel = path.relative_to(stage).as_posix()
-        if rel == 'etc':
+        if rel in ('etc', 'var'):
             continue
         dest = root / rel
         if rel == 'usr/share/info/dir':
@@ -314,7 +315,7 @@ def install_handoff(stage, root, policy, pkg, manifest, cross_archive):
     for dest, _ in backup:
         dest.unlink()
     try:
-        evidence = common.install(stage, root)
+        evidence = common.install(stage, root, pkg['name'])
     except Exception:
         for dest, source in backup:
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -392,7 +393,7 @@ def package_run(project, manifest, pkg, cross_archive):
     if policy:
         evidence, backup = install_handoff(work / 'stage', root, policy, pkg, manifest, cross_archive)
     else:
-        evidence = common.install(work / 'stage', root)
+        evidence = common.install(work / 'stage', root, name)
     try:
         if not evidence:
             raise RuntimeError('empty package stage: ' + name)
