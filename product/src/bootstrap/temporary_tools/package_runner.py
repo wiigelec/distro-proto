@@ -33,7 +33,7 @@ def safe_source(pkg, state):
                                      'https://sourceware.org/pub/binutils/releases/',
                                      'https://gcc.gnu.org/pub/gcc/releases/',
                                      'https://gcc.gnu.org/pub/gcc/infrastructure/',
-                                     'https://ftp.gnu.org/gnu/'))):
+                                     'https://ftp.gnu.org/gnu/')):
         raise RuntimeError('source origin not approved: ' + source['url'])
     algorithms = [kind for kind in ('sha256', 'sha512') if kind in source]
     if len(algorithms) != 1:
