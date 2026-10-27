@@ -120,11 +120,12 @@ for (( i=0; i<${#names[@]}; i++ )); do
         fi
     fi
     # /var is not merged into /usr. Permit only glibc's observed
-    # /var/db/Makefile and reject all other staged /var contents.
+    # /var/db/Makefile (or an empty /var/db directory); reject other contents.
     if [[ -e "$stage/var" || -L "$stage/var" ]]; then
         if [[ "$name" != glibc || -L "$stage/var" || ! -d "$stage/var" ||
               -L "$stage/var/db" || ! -d "$stage/var/db" ||
-              -L "$stage/var/db/Makefile" || ! -f "$stage/var/db/Makefile" ]]; then
+              -L "$stage/var/db/Makefile" ||
+              ( -e "$stage/var/db/Makefile" && ! -f "$stage/var/db/Makefile" ) ]]; then
             echo "unsupported or unsafe staged /var: $name" >&2
             exit 1
         fi

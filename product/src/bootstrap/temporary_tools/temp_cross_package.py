@@ -199,7 +199,7 @@ def ensure_merged_sbin(root):
 
 
 def validate_staged_var(stage, package_name):
-    """Accept only glibc's observed /var/db/Makefile; never import runtime state."""
+    """Allow glibc an empty /var/db or a regular Makefile; forbid other state."""
     var = stage / 'var'
     if not var.exists() and not var.is_symlink():
         return
@@ -207,9 +207,10 @@ def validate_staged_var(stage, package_name):
     makefile = db / 'Makefile'
     if (package_name != 'glibc' or var.is_symlink() or not var.is_dir()
             or db.is_symlink() or not db.is_dir()
-            or makefile.is_symlink() or not makefile.is_file()
+            or (makefile.exists() and (makefile.is_symlink() or not makefile.is_file()))
+            or makefile.is_symlink()
             or {entry.name for entry in var.iterdir()} != {'db'}
-            or {entry.name for entry in db.iterdir()} != {'Makefile'}):
+            or not {entry.name for entry in db.iterdir()} <= {'Makefile'}):
         raise RuntimeError('unsupported or unsafe staged /var payload')
 
 
