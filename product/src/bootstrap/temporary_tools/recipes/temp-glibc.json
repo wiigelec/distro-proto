@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "name": "glibc",
+  "phase": "temp-tools",
+  "execution": "host-cross",
+  "steps": [
+    {
+      "name": "configure",
+      "argv": [
+        "/work/src/configure",
+        "--build=x86_64-pc-linux-gnu",
+        "--host={target}",
+        "--prefix=/usr",
+        "--libdir=/usr/lib64",
+        "--disable-werror",
+        "--disable-nscd",
+        "--with-headers=/toolchain/usr/include",
+        "libc_cv_slibdir=/usr/lib64",
+        "CC={cc}"
+      ]
+    },
+    {
+      "name": "build",
+      "argv": [
+        "make",
+        "-j{jobs}"
+      ]
+    },
+    {
+      "name": "stage-install",
+      "argv": [
+        "make",
+        "install",
+        "install_root=/work/stage"
+      ]
+    }
+  ],
+  "native_steps": [
+    {
+      "name": "configure",
+      "argv": [
+        "/work/src/configure",
+        "--prefix=/usr",
+        "--libdir=/usr/lib64",
+        "--disable-werror",
+        "--disable-nscd",
+        "--with-headers=/usr/include",
+        "libc_cv_slibdir=/usr/lib64",
+        "CC=/usr/bin/gcc"
+      ]
+    },
+    {
+      "name": "build",
+      "argv": [
+        "make",
+        "-j{jobs}"
+      ]
+    },
+    {
+      "name": "stage-install",
+      "argv": [
+        "make",
+        "install",
+        "install_root=/work/stage"
+      ]
+    }
+  ],
+  "validation": {
+    "chroot_executables": []
+  }
+}

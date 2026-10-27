@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "name": "mpc",
+  "phase": "temp-tools",
+  "execution": "host-cross",
+  "steps": [
+    {
+      "name": "configure",
+      "argv": [
+        "/work/src/configure",
+        "--prefix=/usr",
+        "--libdir=/usr/lib64",
+        "--disable-static",
+        "--enable-shared",
+        "CC={cc}",
+        "CFLAGS=-O2",
+        "LDFLAGS={ldflags}",
+        "--with-gmp=/toolchain/usr",
+        "--with-mpfr=/toolchain/usr"
+      ]
+    },
+    {
+      "name": "build",
+      "argv": [
+        "make",
+        "-j{jobs}"
+      ]
+    },
+    {
+      "name": "stage-install",
+      "argv": [
+        "make",
+        "install",
+        "DESTDIR=/work/stage"
+      ]
+    }
+  ],
+  "native_steps": [
+    {
+      "name": "configure",
+      "argv": [
+        "/work/src/configure",
+        "--prefix=/usr",
+        "--libdir=/usr/lib64",
+        "--disable-static",
+        "--enable-shared",
+        "CC=/usr/bin/gcc",
+        "CFLAGS=-O2",
+        "--with-gmp=/usr",
+        "--with-mpfr=/usr"
+      ]
+    },
+    {
+      "name": "build",
+      "argv": [
+        "make",
+        "-j{jobs}"
+      ]
+    },
+    {
+      "name": "stage-install",
+      "argv": [
+        "make",
+        "install",
+        "DESTDIR=/work/stage"
+      ]
+    }
+  ],
+  "validation": {
+    "chroot_executables": []
+  }
+}
