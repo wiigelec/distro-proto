@@ -16,7 +16,10 @@
       "recipe": "recipes/temp-glibc.json",
       "requires": [
         "cross-toolchain"
-      ]
+      ],
+      "installation": {
+        "imported_collision_policy": "preserve-verified"
+      }
     },
     {
       "name": "bash",

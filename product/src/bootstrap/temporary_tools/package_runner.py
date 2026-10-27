@@ -205,10 +205,14 @@ def install_handoff(stage, root, policy, pkg, manifest, cross_archive):
     """Guarded transfer of compiler-private backends; no historical run assumptions."""
     prefix = f'usr/libexec/gcc/{manifest["target"]}/{pkg["version"]}/'
     source_root = stage / 'usr'
-    if not source_root.is_dir():
-        raise RuntimeError('missing staged usr')
-    allowed = policy['compiler_private_prefix']
-    if allowed != 'manifest-target-and-version':
+    if not source_root.is_dir() or source_root.is_symlink():
+        raise RuntimeError('missing or unsafe staged usr')
+    for entry in stage.iterdir():
+        if entry.name != 'usr':
+            raise RuntimeError('unexpected staged payload outside usr: ' + entry.name)
+    compiler_handoff = policy == {'compiler_private_prefix': 'manifest-target-and-version'}
+    preserve_import = policy == {'imported_collision_policy': 'preserve-verified'}
+    if not (compiler_handoff or preserve_import):
         raise RuntimeError('unrecognized ownership handoff policy')
     # Archive-owned collisions outside the compiler-private directory are
     # preserved, never replaced. Compiler-private collisions are transferred
@@ -285,11 +289,11 @@ def install_handoff(stage, root, policy, pkg, manifest, cross_archive):
                     or not os.path.samefile(dest, owner_path)
                     or common.sha(dest) != owner_digest):
                 raise RuntimeError('modified imported hard link: ' + rel)
-        if rel.startswith(prefix):
+        if compiler_handoff and rel.startswith(prefix):
             transition.append((path, dest, rel))
         else:
             preserve.append(path)
-    if not any(rel == prefix + 'cc1' for _, _, rel in transition):
+    if compiler_handoff and not any(rel == prefix + 'cc1' for _, _, rel in transition):
         raise RuntimeError('compiler-private cc1 handoff evidence missing')
     # Drop only staged duplicates of verified imported paths. The live imported
     # files remain untouched and are deliberately absent from this package stamp.
